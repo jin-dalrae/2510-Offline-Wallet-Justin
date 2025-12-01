@@ -1,0 +1,30 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pending transactions
+    match /pending_transactions/{transactionId} {
+      // Allow read if user is sender or receiver
+      allow read: if request.auth != null && 
+                    (resource.data.from == request.resource.data.userAddress ||
+                     resource.data.to == request.resource.data.userAddress);
+      
+      // Allow create for authenticated users
+      allow create: if request.auth != null &&
+                      request.resource.data.from is string &&
+                      request.resource.data.to is string &&
+                      request.resource.data.amount is string &&
+                      request.resource.data.status == 'pending';
+      
+      // Allow update if user is sender or receiver
+      allow update: if request.auth != null &&
+                      (resource.data.from == request.resource.data.userAddress ||
+                       resource.data.to == request.resource.data.userAddress);
+      
+      // Allow delete if user is sender or receiver
+      allow delete: if request.auth != null &&
+                      (resource.data.from == request.resource.data.userAddress ||
+                       resource.data.to == request.resource.data.userAddress);
+    }
+  }
+}
