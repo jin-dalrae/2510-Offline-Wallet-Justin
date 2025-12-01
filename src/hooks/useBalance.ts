@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { blockchain } from '../lib/blockchain';
+import { blockchain, CBBTC_CONTRACT_ADDRESS, EURC_CONTRACT_ADDRESS } from '../lib/blockchain';
 import { storage } from '../lib/storage';
 
 
@@ -9,6 +9,8 @@ export interface BalanceState {
     offlineReceived: string;
     available: string;
     ethBalance: string;
+    cbBtcBalance: string;
+    eurcBalance: string;
     isLoading: boolean;
 }
 
@@ -19,6 +21,8 @@ export function useBalance(address: string | null, isOnline: boolean) {
         offlineReceived: '0',
         available: '0',
         ethBalance: '0',
+        cbBtcBalance: '0',
+        eurcBalance: '0',
         isLoading: true,
     });
 
@@ -30,6 +34,8 @@ export function useBalance(address: string | null, isOnline: boolean) {
                 offlineReceived: '0',
                 available: '0',
                 ethBalance: '0',
+                cbBtcBalance: '0',
+                eurcBalance: '0',
                 isLoading: false,
             });
             return;
@@ -43,13 +49,17 @@ export function useBalance(address: string | null, isOnline: boolean) {
 
             let onChainBalance = '0';
             let ethBalance = '0';
+            let cbBtcBalance = '0';
+            let eurcBalance = '0';
 
             // Only fetch on-chain balance if online
             if (isOnline) {
                 try {
-                    [onChainBalance, ethBalance] = await Promise.all([
+                    [onChainBalance, ethBalance, cbBtcBalance, eurcBalance] = await Promise.all([
                         blockchain.getUSDCBalance(address),
                         blockchain.getEthBalance(address),
+                        blockchain.getERC20Balance(CBBTC_CONTRACT_ADDRESS, address),
+                        blockchain.getERC20Balance(EURC_CONTRACT_ADDRESS, address),
                     ]);
                 } catch (error) {
                     console.error('Error fetching on-chain balance:', error);
@@ -69,6 +79,8 @@ export function useBalance(address: string | null, isOnline: boolean) {
                 offlineReceived: receivedNum.toFixed(6),
                 available,
                 ethBalance: parseFloat(ethBalance).toFixed(6),
+                cbBtcBalance: parseFloat(cbBtcBalance).toFixed(6),
+                eurcBalance: parseFloat(eurcBalance).toFixed(6),
                 isLoading: false,
             });
         } catch (error) {

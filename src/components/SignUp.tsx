@@ -76,7 +76,9 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
 
                     <div className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Account Name</label>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">
+                                Account Name <span className="font-normal text-slate-500">(We'll call you by this name)</span>
+                            </label>
                             <input
                                 type="text"
                                 value={accountName}

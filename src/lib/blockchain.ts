@@ -8,8 +8,8 @@ export const BASE_SEPOLIA_CONFIG = {
     blockExplorer: 'https://sepolia.basescan.org',
 };
 
-// USDC Contract ABI (minimal interface for transfers)
-const USDC_ABI = [
+// ERC20 Contract ABI (minimal interface for transfers)
+const ERC20_ABI = [
     'function balanceOf(address account) view returns (uint256)',
     'function transfer(address to, uint256 amount) returns (bool)',
     'function decimals() view returns (uint8)',
@@ -21,6 +21,9 @@ export const USDC_CONTRACT_ADDRESS =
     import.meta.env.VITE_USDC_CONTRACT_ADDRESS ||
     '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Base Sepolia USDC
 
+export const CBBTC_CONTRACT_ADDRESS = '0xcbB7C0006F23900c38EB856149F799620fcb8A4a'; // Base Sepolia cbBTC
+export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182f45f49ff'; // Placeholder for EURC (using a known testnet token or mock)
+
 export class BlockchainService {
     private provider: ethers.JsonRpcProvider;
     private usdcContract: ethers.Contract;
@@ -29,7 +32,7 @@ export class BlockchainService {
         this.provider = new ethers.JsonRpcProvider(BASE_SEPOLIA_CONFIG.rpcUrl);
         this.usdcContract = new ethers.Contract(
             USDC_CONTRACT_ADDRESS,
-            USDC_ABI,
+            ERC20_ABI,
             this.provider
         );
     }
@@ -52,25 +55,49 @@ export class BlockchainService {
     }
 
     /**
-     * Get ETH balance for gas fees
+     * Get generic ERC20 contract instance
+     */
+    getERC20Contract(address: string, signer?: ethers.Signer): ethers.Contract {
+        const contract = new ethers.Contract(address, ERC20_ABI, this.provider);
+        if (signer) {
+            return contract.connect(signer) as any;
+        }
+        return contract;
+    }
+
+    /**
+     * Get ETH balance
      */
     async getEthBalance(address: string): Promise<string> {
-        const balance = await this.provider.getBalance(address);
-        return ethers.formatEther(balance);
+        try {
+            const balance = await this.provider.getBalance(address);
+            return ethers.formatEther(balance);
+        } catch (error) {
+            console.error('Error fetching ETH balance:', error);
+            return '0';
+        }
+    }
+
+    /**
+     * Get generic ERC20 balance
+     */
+    async getERC20Balance(tokenAddress: string, walletAddress: string): Promise<string> {
+        try {
+            const contract = this.getERC20Contract(tokenAddress);
+            const balance = await contract.balanceOf(walletAddress);
+            const decimals = await contract.decimals();
+            return ethers.formatUnits(balance, decimals);
+        } catch (error) {
+            console.error(`Error fetching ERC20 balance for ${tokenAddress}:`, error);
+            return '0';
+        }
     }
 
     /**
      * Get USDC balance
      */
     async getUSDCBalance(address: string): Promise<string> {
-        try {
-            const balance = await this.usdcContract.balanceOf(address);
-            const decimals = await this.usdcContract.decimals();
-            return ethers.formatUnits(balance, decimals);
-        } catch (error) {
-            console.error('Error fetching USDC balance:', error);
-            return '0';
-        }
+        return this.getERC20Balance(USDC_CONTRACT_ADDRESS, address);
     }
 
     /**
@@ -83,6 +110,25 @@ export class BlockchainService {
     ): Promise<ethers.TransactionResponse> {
         const signer = wallet.connect(this.provider);
         const contract = this.getUSDCContract(signer);
+
+        const decimals = await contract.decimals();
+        const amountInWei = ethers.parseUnits(amount, decimals);
+
+        const tx = await contract.transfer(to, amountInWei);
+        return tx;
+    }
+
+    /**
+     * Transfer any ERC20 token
+     */
+    async transferERC20(
+        wallet: ethers.Wallet,
+        tokenAddress: string,
+        to: string,
+        amount: string
+    ): Promise<ethers.TransactionResponse> {
+        const signer = wallet.connect(this.provider);
+        const contract = this.getERC20Contract(tokenAddress, signer);
 
         const decimals = await contract.decimals();
         const amountInWei = ethers.parseUnits(amount, decimals);
