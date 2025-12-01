@@ -4,7 +4,7 @@ import { useWallet } from './hooks/useWallet';
 import { useBalance } from './hooks/useBalance';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useSettlement } from './hooks/useSettlement';
-import { LandingPage } from './components/LandingPage';
+import { LandingPageAlternative } from './components/LandingPageAlternative';
 import { SignUp } from './components/SignUp';
 import { SignIn } from './components/SignIn';
 import { NewDashboard } from './components/NewDashboard';
@@ -13,6 +13,8 @@ import { ReceiveOffline } from './components/ReceiveOffline';
 import { TransactionHistory } from './components/TransactionHistory';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { firebase } from './lib/firebase';
+import { storage } from './lib/storage';
+import { v4 as uuidv4 } from 'uuid';
 
 type View =
     | 'landing'
@@ -104,11 +106,32 @@ function App() {
         }
     };
 
-    const handleLoadMoney = () => {
+    const handleLoadMoney = async () => {
         window.open('https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet', '_blank');
         toast('Opening Coinbase Faucet...', {
             icon: '🪙',
         });
+
+        // Record "Load" as a pending transaction so it shows in history
+        if (wallet.address) {
+            try {
+                const txId = uuidv4();
+                const deviceId = storage.getDeviceId();
+
+                await storage.addPendingTransaction({
+                    id: txId,
+                    type: 'received',
+                    from: 'Coinbase Faucet',
+                    to: wallet.address,
+                    amount: 'Pending', // Unknown amount until it arrives
+                    timestamp: Date.now(),
+                    status: 'pending',
+                    deviceId,
+                });
+            } catch (error) {
+                console.error('Failed to record load transaction:', error);
+            }
+        }
     };
 
     const handleSendSuccess = () => {
@@ -150,10 +173,11 @@ function App() {
 
             {/* Views */}
             {view === 'landing' && (
-                <LandingPage
+                <LandingPageAlternative
                     onSignUp={() => setView('signup')}
                     onSignIn={() => setView('signin')}
                     onPrivacy={() => setView('privacy')}
+                    onTryDemo={() => setView('signup')}
                 />
             )}
 

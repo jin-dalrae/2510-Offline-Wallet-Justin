@@ -217,3 +217,27 @@ MIT
 - Use on testnet only
 - Never send real money
 - Always backup your recovery phrase
+
+---
+
+## Quick preview (run locally)
+
+To preview the app and the landing page locally:
+
+```bash
+# install deps (if not already)
+npm install
+
+# start dev server (Vite)
+npm run dev
+```
+
+Open the URL printed by Vite (usually http://localhost:5173) and you should see the app — the landing page will be the initial view when no wallet is unlocked.
+
+If you'd like the landing page to show the exact mobile screenshot from your attachment, add the screenshot file to the project's `public/` folder with this filename:
+
+```
+public/landing-screenshot.png
+```
+
+Vite serves files from `public/` at the root, so the landing page will automatically display the image if present.
