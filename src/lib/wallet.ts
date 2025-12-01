@@ -7,15 +7,15 @@ export interface WalletData {
 }
 
 export class WalletManager {
-    private wallet: ethers.Wallet | null = null;
+    private wallet: ethers.HDNodeWallet | ethers.Wallet | null = null;
 
     /**
      * Create a new random wallet
      */
-    static createWallet(): { wallet: ethers.Wallet; mnemonic: string } {
+    static createWallet(): { wallet: ethers.HDNodeWallet; mnemonic: string } {
         const wallet = ethers.Wallet.createRandom();
         return {
-            wallet: wallet as any,
+            wallet,
             mnemonic: wallet.mnemonic?.phrase || '',
         };
     }
@@ -23,8 +23,8 @@ export class WalletManager {
     /**
      * Import wallet from mnemonic phrase
      */
-    static fromMnemonic(mnemonic: string): ethers.Wallet {
-        return ethers.Wallet.fromPhrase(mnemonic) as any;
+    static fromMnemonic(mnemonic: string): ethers.HDNodeWallet {
+        return ethers.Wallet.fromPhrase(mnemonic);
     }
 
     /**
@@ -63,10 +63,10 @@ export class WalletManager {
      * Load wallet from encrypted data
      */
     async unlock(encryptedPrivateKey: string, password: string): Promise<void> {
-        this.wallet = (await ethers.Wallet.fromEncryptedJson(
+        this.wallet = await ethers.Wallet.fromEncryptedJson(
             encryptedPrivateKey,
             password
-        )) as any;
+        );
     }
 
     /**
@@ -86,7 +86,7 @@ export class WalletManager {
     /**
      * Get current wallet instance
      */
-    getWallet(): ethers.Wallet {
+    getWallet(): ethers.HDNodeWallet | ethers.Wallet {
         if (!this.wallet) {
             throw new Error('Wallet is locked');
         }

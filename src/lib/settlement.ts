@@ -8,6 +8,14 @@ export interface SettlementResult {
     success: boolean;
     txHash?: string;
     error?: string;
+    retries?: number;
+}
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000; // Start with 2 seconds
+
+async function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export class SettlementService {
@@ -18,7 +26,7 @@ export class SettlementService {
      * This sweeps funds from temporary wallets to the main wallet
      */
     async settlePendingTransactions(
-        mainWallet: ethers.Wallet,
+        mainWallet: ethers.HDNodeWallet | ethers.Wallet,
         onProgress?: (current: number, total: number, status: string) => void
     ): Promise<SettlementResult[]> {
         if (this.isSettling) {
@@ -82,11 +90,22 @@ export class SettlementService {
     }
 
     /**
-     * Settle a single transaction
+     * Settle a single transaction with retry logic
      */
     private async settleTransaction(
         tx: PendingTransaction,
-        mainWallet: ethers.Wallet
+        mainWallet: ethers.HDNodeWallet | ethers.Wallet
+    ): Promise<SettlementResult> {
+        return await this.settleTransactionWithRetry(tx, mainWallet, 0);
+    }
+
+    /**
+     * Settle a single transaction with retry logic
+     */
+    private async settleTransactionWithRetry(
+        tx: PendingTransaction,
+        mainWallet: ethers.HDNodeWallet | ethers.Wallet,
+        retryCount: number
     ): Promise<SettlementResult> {
         try {
             if (!tx.voucherData) {
@@ -103,7 +122,7 @@ export class SettlementService {
             const balanceNum = parseFloat(balance);
 
             if (balanceNum <= 0) {
-                // Mark as failed - no funds
+                // Mark as failed - no funds (not retryable)
                 await storage.updatePendingTransaction(tx.id, {
                     status: 'failed',
                 });
@@ -117,6 +136,7 @@ export class SettlementService {
             // Check if temp wallet has enough ETH for gas
             const hasGas = await blockchain.hasEnoughGas(tempWallet.address);
             if (!hasGas) {
+                // Insufficient gas - not retryable
                 return {
                     success: false,
                     error: 'Temporary wallet has insufficient gas',
@@ -130,7 +150,14 @@ export class SettlementService {
             );
 
             if (!txResponse) {
-                return { success: false, error: 'Failed to sweep funds' };
+                // No response - this could be transient, retry if possible
+                if (retryCount < MAX_RETRIES) {
+                    const delayTime = RETRY_DELAY_MS * Math.pow(2, retryCount);
+                    console.log(`Retrying settlement in ${delayTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+                    await delay(delayTime);
+                    return await this.settleTransactionWithRetry(tx, mainWallet, retryCount + 1);
+                }
+                return { success: false, error: 'Failed to sweep funds after retries', retries: retryCount };
             }
 
             // Wait for confirmation
@@ -153,6 +180,7 @@ export class SettlementService {
                 return {
                     success: true,
                     txHash: txResponse.hash,
+                    retries: retryCount,
                 };
             } else {
                 await storage.updatePendingTransaction(tx.id, {
@@ -167,7 +195,23 @@ export class SettlementService {
         } catch (error) {
             console.error('Error settling transaction:', error);
 
-            // Mark as failed
+            // Check if this is a transient error that we should retry
+            const errorMessage = (error as Error).message.toLowerCase();
+            const isTransientError =
+                errorMessage.includes('network') ||
+                errorMessage.includes('timeout') ||
+                errorMessage.includes('connection') ||
+                errorMessage.includes('econnrefused') ||
+                errorMessage.includes('nonce');
+
+            if (isTransientError && retryCount < MAX_RETRIES) {
+                const delayTime = RETRY_DELAY_MS * Math.pow(2, retryCount);
+                console.log(`Transient error detected, retrying in ${delayTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+                await delay(delayTime);
+                return await this.settleTransactionWithRetry(tx, mainWallet, retryCount + 1);
+            }
+
+            // Mark as failed (permanent error or max retries reached)
             await storage.updatePendingTransaction(tx.id, {
                 status: 'failed',
             });
@@ -175,6 +219,7 @@ export class SettlementService {
             return {
                 success: false,
                 error: (error as Error).message,
+                retries: retryCount,
             };
         }
     }

@@ -135,7 +135,7 @@ export function useWallet() {
         }));
     }, [state.walletManager]);
 
-    const getWallet = useCallback((): ethers.Wallet => {
+    const getWallet = useCallback((): ethers.HDNodeWallet | ethers.Wallet => {
         if (!state.walletManager || !state.isUnlocked) {
             throw new Error('Wallet is locked');
         }

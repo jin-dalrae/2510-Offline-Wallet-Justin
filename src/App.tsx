@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 import { useWallet } from './hooks/useWallet';
 import { useBalance } from './hooks/useBalance';
@@ -16,17 +17,8 @@ import { firebase } from './lib/firebase';
 import { storage } from './lib/storage';
 import { v4 as uuidv4 } from 'uuid';
 
-type View =
-    | 'landing'
-    | 'signup'
-    | 'signin'
-    | 'dashboard'
-    | 'send'
-    | 'receive'
-    | 'history'
-    | 'privacy';
-
 function App() {
+    const navigate = useNavigate();
     const wallet = useWallet();
     const isOnline = useOnlineStatus();
     const { balance, refreshBalance } = useBalance(
@@ -40,23 +32,29 @@ function App() {
         isOnline
     );
 
-    const [view, setView] = useState<View>('landing');
-
-    // Initialize Firebase
+    // Initialize IndexedDB and Firebase at startup
     useEffect(() => {
-        firebase.initialize().catch((err) => {
-            console.warn('Firebase initialization failed:', err);
-        });
+        const initializeServices = async () => {
+            try {
+                // Initialize storage first (critical for wallet operations)
+                await storage.init();
+            } catch (err) {
+                console.error('Failed to initialize storage:', err);
+                toast.error('Failed to initialize local storage');
+            }
+
+            // Initialize Firebase (optional)
+            firebase.initialize().catch((err) => {
+                console.warn('Firebase initialization failed, running in offline-only mode:', err);
+                toast('Running in offline-only mode', {
+                    icon: '📡',
+                    duration: 3000,
+                });
+            });
+        };
+
+        initializeServices();
     }, []);
-
-    // Determine initial view based on wallet state
-    useEffect(() => {
-        if (wallet.isUnlocked) {
-            setView('dashboard');
-        } else {
-            setView('landing');
-        }
-    }, [wallet.isUnlocked]);
 
     // Show settlement notifications
     useEffect(() => {
@@ -88,7 +86,7 @@ function App() {
         try {
             await wallet.createWallet(accountName, privateKey);
             toast.success('Account created!');
-            setView('dashboard');
+            navigate('/dashboard');
         } catch (error) {
             console.error('Sign up error:', error);
             toast.error('Failed to create account');
@@ -99,7 +97,7 @@ function App() {
         try {
             await wallet.loginWithKey(privateKey);
             toast.success('Welcome back!');
-            setView('dashboard');
+            navigate('/dashboard');
         } catch (error) {
             console.error('Sign in error:', error);
             toast.error('Failed to sign in');
@@ -149,9 +147,9 @@ function App() {
             // In a real app, this would check if receiver is online
             // For now, we'll default to the offline voucher flow as it works for both
             // but we could add a "Send to Address" modal here for online-only
-            setView('send');
+            navigate('/send');
         } else {
-            setView('send');
+            navigate('/send');
         }
     };
 
@@ -171,81 +169,143 @@ function App() {
                 }}
             />
 
-            {/* Views */}
-            {view === 'landing' && (
-                <LandingPageAlternative
-                    onSignUp={() => setView('signup')}
-                    onSignIn={() => setView('signin')}
-                    onPrivacy={() => setView('privacy')}
-                    onTryDemo={() => setView('signup')}
+            {/* Routes */}
+            <Routes>
+                <Route
+                    path="/"
+                    element={
+                        <LandingPageAlternative
+                            onSignUp={() => navigate('/signup')}
+                            onSignIn={() => navigate('/signin')}
+                            onPrivacy={() => navigate('/privacy')}
+                            onTryDemo={() => navigate('/signup')}
+                        />
+                    }
                 />
-            )}
 
-            {view === 'signup' && (
-                <SignUp
-                    onComplete={handleSignUp}
-                    onBack={() => setView('landing')}
-                    onPrivacy={() => setView('privacy')}
+                <Route
+                    path="/signup"
+                    element={
+                        <SignUp
+                            onComplete={handleSignUp}
+                            onBack={() => navigate('/')}
+                            onPrivacy={() => navigate('/privacy')}
+                        />
+                    }
                 />
-            )}
 
-            {view === 'signin' && (
-                <SignIn
-                    onComplete={handleSignIn}
-                    onBack={() => setView('landing')}
+                <Route
+                    path="/signin"
+                    element={
+                        <SignIn
+                            onComplete={handleSignIn}
+                            onBack={() => navigate('/')}
+                        />
+                    }
                 />
-            )}
 
-            {view === 'dashboard' && wallet.isUnlocked && (
-                <NewDashboard
-                    accountName={wallet.accountName || 'My Wallet'}
-                    address={wallet.address!}
-                    balance={balance}
-                    isOnline={isOnline}
-                    onSendMoney={handleUnifiedSend}
-                    onLoadMoney={handleLoadMoney}
-                    onViewHistory={() => setView('history')}
-                    onSettings={() => toast('Settings coming soon')}
-                    onSendOffline={() => setView('send')}
-                    onReceiveOffline={() => setView('receive')}
-                    onRefresh={refreshBalance}
-                    onLogout={() => {
-                        wallet.logout();
-                        setView('landing');
-                    }}
+                <Route
+                    path="/dashboard"
+                    element={
+                        wallet.isUnlocked ? (
+                            <NewDashboard
+                                accountName={wallet.accountName || 'My Wallet'}
+                                address={wallet.address!}
+                                balance={balance}
+                                isOnline={isOnline}
+                                onSendMoney={handleUnifiedSend}
+                                onLoadMoney={handleLoadMoney}
+                                onViewHistory={() => navigate('/history')}
+                                onSettings={() => toast('Settings coming soon')}
+                                onSendOffline={() => navigate('/send')}
+                                onReceiveOffline={() => navigate('/receive')}
+                                onRefresh={refreshBalance}
+                                onLogout={() => {
+                                    wallet.logout();
+                                    navigate('/');
+                                }}
+                            />
+                        ) : (
+                            <LandingPageAlternative
+                                onSignUp={() => navigate('/signup')}
+                                onSignIn={() => navigate('/signin')}
+                                onPrivacy={() => navigate('/privacy')}
+                                onTryDemo={() => navigate('/signup')}
+                            />
+                        )
+                    }
                 />
-            )}
 
-            {view === 'send' && wallet.isUnlocked && (
-                <SendOffline
-                    wallet={wallet.getWallet()}
-                    availableBalance={balance.available}
-                    onClose={() => setView('dashboard')}
-                    onSuccess={handleSendSuccess}
+                <Route
+                    path="/send"
+                    element={
+                        wallet.isUnlocked ? (
+                            <SendOffline
+                                wallet={wallet.getWallet()}
+                                availableBalance={balance.available}
+                                onClose={() => navigate('/dashboard')}
+                                onSuccess={handleSendSuccess}
+                            />
+                        ) : (
+                            <LandingPageAlternative
+                                onSignUp={() => navigate('/signup')}
+                                onSignIn={() => navigate('/signin')}
+                                onPrivacy={() => navigate('/privacy')}
+                                onTryDemo={() => navigate('/signup')}
+                            />
+                        )
+                    }
                 />
-            )}
 
-            {view === 'receive' && wallet.isUnlocked && (
-                <ReceiveOffline
-                    address={wallet.address!}
-                    onClose={() => setView('dashboard')}
-                    onSuccess={handleReceiveSuccess}
+                <Route
+                    path="/receive"
+                    element={
+                        wallet.isUnlocked ? (
+                            <ReceiveOffline
+                                address={wallet.address!}
+                                onClose={() => navigate('/dashboard')}
+                                onSuccess={handleReceiveSuccess}
+                            />
+                        ) : (
+                            <LandingPageAlternative
+                                onSignUp={() => navigate('/signup')}
+                                onSignIn={() => navigate('/signin')}
+                                onPrivacy={() => navigate('/privacy')}
+                                onTryDemo={() => navigate('/signup')}
+                            />
+                        )
+                    }
                 />
-            )}
 
-            {view === 'history' && wallet.isUnlocked && (
-                <TransactionHistory
-                    address={wallet.address!}
-                    isOnline={isOnline}
-                    onClose={() => setView('dashboard')}
+                <Route
+                    path="/history"
+                    element={
+                        wallet.isUnlocked ? (
+                            <TransactionHistory
+                                address={wallet.address!}
+                                isOnline={isOnline}
+                                onClose={() => navigate('/dashboard')}
+                            />
+                        ) : (
+                            <LandingPageAlternative
+                                onSignUp={() => navigate('/signup')}
+                                onSignIn={() => navigate('/signin')}
+                                onPrivacy={() => navigate('/privacy')}
+                                onTryDemo={() => navigate('/signup')}
+                            />
+                        )
+                    }
                 />
-            )}
 
-            {view === 'privacy' && (
-                <PrivacyPolicy
-                    onBack={() => setView(wallet.isUnlocked ? 'dashboard' : 'landing')}
+                <Route
+                    path="/privacy"
+                    element={
+                        <PrivacyPolicy
+                            onBack={() => navigate(wallet.isUnlocked ? '/dashboard' : '/')}
+                        />
+                    }
                 />
-            )}
+            </Routes>
 
             {/* Settlement Progress Overlay */}
             {settlement.isSettling && (

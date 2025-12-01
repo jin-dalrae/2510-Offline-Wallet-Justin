@@ -11,7 +11,7 @@ export interface SettlementState {
 
 export function useSettlement(
     address: string | null,
-    getWallet: () => ethers.Wallet,
+    getWallet: () => ethers.HDNodeWallet | ethers.Wallet,
     isOnline: boolean
 ) {
     const [state, setState] = useState<SettlementState>({

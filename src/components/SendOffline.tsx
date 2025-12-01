@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 
 interface SendOfflineProps {
-    wallet: ethers.Wallet;
+    wallet: ethers.HDNodeWallet | ethers.Wallet;
     availableBalance: string;
     onClose: () => void;
     onSuccess: () => void;
@@ -33,8 +33,37 @@ export function SendOffline({
         const amountNum = parseFloat(amount);
         const availableNum = parseFloat(availableBalance);
 
+        // Input validation
+        if (!amount || amount.trim() === '') {
+            setError('Please enter an amount');
+            return;
+        }
+
         if (isNaN(amountNum) || amountNum <= 0) {
             setError('Please enter a valid amount');
+            return;
+        }
+
+        // Minimum amount validation (0.01 USDC)
+        if (amountNum < 0.01) {
+            setError('Minimum amount is 0.01 USDC');
+            return;
+        }
+
+        // Check offline allowance
+        const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
+        if (offlineAllowanceData) {
+            const { limit, spent } = JSON.parse(offlineAllowanceData);
+            const availableOffline = limit - spent;
+            if (amountNum > availableOffline) {
+                setError(`Insufficient offline allowance. Available: $${availableOffline.toFixed(2)}`);
+                return;
+            }
+        }
+
+        // Maximum amount validation (10,000 USDC per transaction)
+        if (amountNum > 10000) {
+            setError('Maximum amount is 10,000 USDC per transaction');
             return;
         }
 
@@ -102,6 +131,19 @@ export function SendOffline({
                 newSent.toString(),
                 currentBalances.received
             );
+
+            // Update offline allowance spent
+            const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
+            if (offlineAllowanceData) {
+                const { limit, spent } = JSON.parse(offlineAllowanceData);
+                const newSpent = spent + parseFloat(amount);
+                localStorage.setItem(
+                    `offlineAllowance_${wallet.address}`,
+                    JSON.stringify({ limit, spent: newSpent })
+                );
+                // Notify other components of the change
+                window.dispatchEvent(new Event('offlineAllowanceUpdated'));
+            }
 
             setStep('show-voucher');
             toast.success('Voucher created!');

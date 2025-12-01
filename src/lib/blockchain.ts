@@ -17,6 +17,14 @@ const ERC20_ABI = [
     'event Transfer(address indexed from, address indexed to, uint256 value)',
 ];
 
+// Type for ERC20 contract with methods
+interface ERC20Contract extends ethers.BaseContract {
+    balanceOf(account: string): Promise<bigint>;
+    transfer(to: string, amount: bigint): Promise<ethers.ContractTransactionResponse>;
+    decimals(): Promise<bigint>;
+    symbol(): Promise<string>;
+}
+
 export const USDC_CONTRACT_ADDRESS =
     import.meta.env.VITE_USDC_CONTRACT_ADDRESS ||
     '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Base Sepolia USDC
@@ -26,7 +34,7 @@ export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182f45f49ff
 
 export class BlockchainService {
     private provider: ethers.JsonRpcProvider;
-    private usdcContract: ethers.Contract;
+    private usdcContract: ERC20Contract;
 
     constructor() {
         this.provider = new ethers.JsonRpcProvider(BASE_SEPOLIA_CONFIG.rpcUrl);
@@ -34,7 +42,7 @@ export class BlockchainService {
             USDC_CONTRACT_ADDRESS,
             ERC20_ABI,
             this.provider
-        );
+        ) as unknown as ERC20Contract;
     }
 
     /**
@@ -47,9 +55,9 @@ export class BlockchainService {
     /**
      * Get USDC contract instance
      */
-    getUSDCContract(signer?: ethers.Signer): ethers.Contract {
+    getUSDCContract(signer?: ethers.Signer): ERC20Contract {
         if (signer) {
-            return this.usdcContract.connect(signer) as any;
+            return this.usdcContract.connect(signer) as unknown as ERC20Contract;
         }
         return this.usdcContract;
     }
@@ -57,10 +65,10 @@ export class BlockchainService {
     /**
      * Get generic ERC20 contract instance
      */
-    getERC20Contract(address: string, signer?: ethers.Signer): ethers.Contract {
-        const contract = new ethers.Contract(address, ERC20_ABI, this.provider);
+    getERC20Contract(address: string, signer?: ethers.Signer): ERC20Contract {
+        const contract = new ethers.Contract(address, ERC20_ABI, this.provider) as unknown as ERC20Contract;
         if (signer) {
-            return contract.connect(signer) as any;
+            return contract.connect(signer) as unknown as ERC20Contract;
         }
         return contract;
     }
@@ -242,7 +250,11 @@ export class BlockchainService {
             const decimals = await this.usdcContract.decimals();
             const amountInWei = ethers.parseUnits(amount, decimals);
 
-            const gasEstimate = await this.usdcContract.transfer.estimateGas(to, amountInWei);
+            // Estimate gas using the provider
+            const gasEstimate = await this.provider.estimateGas({
+                to: USDC_CONTRACT_ADDRESS,
+                data: this.usdcContract.interface.encodeFunctionData('transfer', [to, amountInWei])
+            });
             return gasEstimate;
         } catch (error) {
             console.error('Error estimating gas:', error);

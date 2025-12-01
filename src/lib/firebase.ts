@@ -195,7 +195,7 @@ class FirebaseService {
         await this.updateTransaction(id, {
             status: 'settled',
             settledTxHash: txHash,
-            settledAt: Timestamp.now() as any,
+            settledAt: Timestamp.now(),
         });
     }
 

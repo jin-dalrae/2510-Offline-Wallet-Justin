@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { BalanceState } from '../hooks/useBalance';
 import toast from 'react-hot-toast';
+import { WalletList } from './WalletList';
+import { storage } from '../lib/storage';
 
 interface NewDashboardProps {
     accountName: string;
@@ -35,6 +37,67 @@ export function NewDashboard({
     const [showBalance, setShowBalance] = useState(false);
     const [showQRModal, setShowQRModal] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
+    const [showWalletList, setShowWalletList] = useState(false);
+    const [offlineAllowanceLimit, setOfflineAllowanceLimit] = useState(0);
+    const [offlineSpent, setOfflineSpent] = useState(0);
+    const [activeWalletId, setActiveWalletId] = useState<string | null>(null);
+
+    // Load active wallet ID
+    useEffect(() => {
+        const loadActiveWallet = async () => {
+            const id = await storage.getActiveWalletId();
+            setActiveWalletId(id);
+        };
+        loadActiveWallet();
+    }, []);
+
+    // Load offline allowance settings from localStorage
+    useEffect(() => {
+        const saved = localStorage.getItem(`offlineAllowance_${address}`);
+        if (saved) {
+            const { limit, spent } = JSON.parse(saved);
+            setOfflineAllowanceLimit(limit || 0);
+            setOfflineSpent(spent || 0);
+        }
+    }, [address]);
+
+    // Save offline allowance settings to localStorage
+    useEffect(() => {
+        if (address) {
+            localStorage.setItem(
+                `offlineAllowance_${address}`,
+                JSON.stringify({ limit: offlineAllowanceLimit, spent: offlineSpent })
+            );
+        }
+    }, [address, offlineAllowanceLimit, offlineSpent]);
+
+    // Reset offline spent when going back online
+    useEffect(() => {
+        if (isOnline) {
+            setOfflineSpent(0);
+        }
+    }, [isOnline]);
+
+    // Listen for changes to offline allowance from other components
+    useEffect(() => {
+        const handleStorageChange = () => {
+            const saved = localStorage.getItem(`offlineAllowance_${address}`);
+            if (saved) {
+                const { limit, spent } = JSON.parse(saved);
+                setOfflineAllowanceLimit(limit || 0);
+                setOfflineSpent(spent || 0);
+            }
+        };
+
+        // Listen for custom event when localStorage is updated
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('offlineAllowanceUpdated', handleStorageChange);
+
+        return () => {
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('offlineAllowanceUpdated', handleStorageChange);
+        };
+    }, [address]);
 
     const handleCopyAddress = async () => {
         try {
@@ -48,7 +111,7 @@ export function NewDashboard({
     const totalBalance = parseFloat(balance.onChain) + parseFloat(balance.offlineReceived) - parseFloat(balance.offlineSent);
 
     return (
-        <div className="min-h-screen bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] font-sans text-slate-900 p-6">
+        <div className="min-h-screen bg-slate-100 font-sans text-slate-900 p-6">
             {/* Side Menu Overlay */}
             {showMenu && (
                 <div className="fixed inset-0 z-50 flex">
@@ -64,6 +127,12 @@ export function NewDashboard({
                         </div>
 
                         <nav className="space-y-4 flex-1">
+                            <button onClick={() => { setShowWalletList(true); setShowMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-xl font-medium flex items-center gap-3">
+                                <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                                </svg>
+                                My Wallets
+                            </button>
                             <button onClick={onViewHistory} className="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-xl font-medium flex items-center gap-3">
                                 <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -89,26 +158,28 @@ export function NewDashboard({
                 </div>
             )}
 
-            {/* Header */}
-            <div className="mb-6 flex justify-between items-start">
-                <div>
-                    <h1 className="text-5xl font-serif font-bold mb-2">justin</h1>
-                    <p className="text-lg text-slate-800 font-medium">Let's reinvent Cash with Tech.</p>
+            {/* Wallet Container */}
+            <div className="max-w-2xl mx-auto bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] rounded-3xl p-6 shadow-xl">
+                {/* Header */}
+                <div className="mb-6 flex justify-between items-start">
+                    <div>
+                        <h1 className="text-5xl font-serif font-bold mb-2">justin</h1>
+                        <p className="text-lg text-slate-800 font-medium">Let's reinvent Cash with Tech.</p>
+                    </div>
+                    <button
+                        onClick={() => setShowMenu(true)}
+                        className="p-2 hover:bg-white/50 rounded-full transition-colors"
+                    >
+                        <svg className="w-8 h-8 text-slate-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
                 </div>
-                <button
-                    onClick={() => setShowMenu(true)}
-                    className="p-2 hover:bg-white/50 rounded-full transition-colors"
-                >
-                    <svg className="w-8 h-8 text-slate-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                </button>
-            </div>
 
             {/* Main Content */}
-            <div className="space-y-4 max-w-md">
+            <div className="space-y-4">
                 {/* Balance Card */}
-                <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-sm">
+                <div className="bg-white/60 backdrop-blur-sm rounded-3xl p-6 shadow-sm">
                     <div className="flex items-center gap-3 mb-4">
                         <h2 className="text-2xl font-serif font-bold text-slate-800">Hello, {accountName}</h2>
                         <div className="flex gap-2 ml-auto">
@@ -143,24 +214,30 @@ export function NewDashboard({
                         </div>
                         <button
                             onClick={() => setShowBalance(!showBalance)}
-                            className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-800 transition"
+                            className="px-4 py-2 bg-[#1e3a5f] text-white text-sm font-medium rounded-xl hover:bg-[#2d4a6f] transition"
                         >
                             {showBalance ? 'Hide' : 'Show'}
                         </button>
                     </div>
                 </div>
 
-                {/* Send and Load Buttons */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Send, Load, and Receive Buttons */}
+                <div className="grid grid-cols-3 gap-3">
                     <button
                         onClick={isOnline ? onSendMoney : onSendOffline}
-                        className="bg-white/80 backdrop-blur-sm rounded-2xl py-4 font-bold text-lg text-slate-900 hover:bg-white transition shadow-sm"
+                        className="bg-white/60 backdrop-blur-sm rounded-2xl py-4 font-bold text-base text-slate-900 hover:bg-white transition shadow-sm"
                     >
                         Send
                     </button>
                     <button
+                        onClick={onReceiveOffline}
+                        className="bg-white/60 backdrop-blur-sm rounded-2xl py-4 font-bold text-base text-slate-900 hover:bg-white transition shadow-sm"
+                    >
+                        Receive
+                    </button>
+                    <button
                         onClick={onLoadMoney}
-                        className="bg-white/80 backdrop-blur-sm rounded-2xl py-4 font-bold text-lg text-slate-900 hover:bg-white transition shadow-sm"
+                        className="bg-white/60 backdrop-blur-sm rounded-2xl py-4 font-bold text-base text-slate-900 hover:bg-white transition shadow-sm"
                     >
                         Load
                     </button>
@@ -169,15 +246,43 @@ export function NewDashboard({
                 {/* Off-line Allowance */}
                 <div className="bg-white/60 backdrop-blur-sm rounded-3xl p-6 shadow-sm">
                     <h3 className="text-lg font-bold mb-2">Off-line allowance</h3>
-                    <p className="text-2xl font-bold font-mono">
-                        {showBalance ? `$${balance.available}` : '••••••'}
+                    <p className="text-2xl font-bold font-mono mb-4">
+                        {showBalance ? `$${Math.max(0, offlineAllowanceLimit - offlineSpent).toFixed(2)}` : '••••••'}
                     </p>
-                    <button
-                        onClick={onReceiveOffline}
-                        className="mt-4 w-full bg-slate-900 text-white py-3 rounded-xl font-medium hover:bg-slate-800 transition"
-                    >
-                        Receive
-                    </button>
+
+                    {isOnline ? (
+                        <div className="space-y-3">
+                            <div className="flex justify-between text-sm text-slate-600">
+                                <span>$0</span>
+                                <span className="font-medium">Set offline limit</span>
+                                <span>${totalBalance.toFixed(2)}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max={totalBalance}
+                                step="0.01"
+                                value={offlineAllowanceLimit}
+                                onChange={(e) => setOfflineAllowanceLimit(parseFloat(e.target.value))}
+                                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1e3a5f]"
+                            />
+                            <div className="text-center text-sm font-medium text-slate-700">
+                                ${offlineAllowanceLimit.toFixed(2)}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-slate-100 rounded-xl p-4 text-center">
+                            <p className="text-sm text-slate-600 mb-1">Offline mode</p>
+                            <p className="text-lg font-bold text-slate-900">
+                                Limit locked at ${offlineAllowanceLimit.toFixed(2)}
+                            </p>
+                            {offlineSpent > 0 && (
+                                <p className="text-xs text-slate-500 mt-2">
+                                    Spent: ${offlineSpent.toFixed(2)}
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Assets List - Only show if balance > 0 */}
@@ -264,6 +369,7 @@ export function NewDashboard({
                     </button>
                 </div>
             </div>
+            </div>
 
             {/* QR Code Modal */}
             {showQRModal && (
@@ -301,7 +407,7 @@ export function NewDashboard({
 
                         <button
                             onClick={() => setShowQRModal(false)}
-                            className="w-full mt-6 bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-colors"
+                            className="w-full mt-6 bg-[#1e3a5f] text-white font-bold py-3 rounded-xl hover:bg-[#2d4a6f] transition-colors"
                         >
                             Done
                         </button>

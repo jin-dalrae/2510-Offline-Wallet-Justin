@@ -138,13 +138,98 @@ class StorageManager {
         return {
             address: wallet.address,
             encryptedPrivateKey: wallet.encryptedPrivateKey,
-            accountName: (wallet as any).accountName,
+            accountName: wallet.accountName,
         };
     }
 
     async deleteWallet(): Promise<void> {
         if (!this.db) throw new Error('Database not initialized');
         await this.db.delete('wallet', 'main');
+    }
+
+    // Multi-wallet operations
+    async addWallet(
+        address: string,
+        encryptedPrivateKey: string,
+        accountName: string
+    ): Promise<string> {
+        if (!this.db) throw new Error('Database not initialized');
+
+        const walletId = uuidv4();
+        await this.db.put('wallet', {
+            id: walletId,
+            address,
+            encryptedPrivateKey,
+            accountName,
+        });
+
+        // If this is the first wallet, set it as active
+        const wallets = await this.getAllWallets();
+        if (wallets.length === 1) {
+            await this.setActiveWallet(walletId);
+        }
+
+        return walletId;
+    }
+
+    async getAllWallets(): Promise<Array<{
+        id: string;
+        address: string;
+        encryptedPrivateKey: string;
+        accountName?: string;
+    }>> {
+        if (!this.db) throw new Error('Database not initialized');
+
+        const allWallets = await this.db.getAll('wallet');
+        // Filter out the old 'main' wallet if it exists
+        return allWallets.filter(w => w.id !== 'main');
+    }
+
+    async getWalletById(id: string): Promise<{
+        id: string;
+        address: string;
+        encryptedPrivateKey: string;
+        accountName?: string;
+    } | null> {
+        if (!this.db) throw new Error('Database not initialized');
+        return await this.db.get('wallet', id) || null;
+    }
+
+    async removeWallet(id: string): Promise<void> {
+        if (!this.db) throw new Error('Database not initialized');
+
+        // If removing active wallet, set another as active
+        const activeId = await this.getActiveWalletId();
+        if (activeId === id) {
+            const wallets = await this.getAllWallets();
+            const remaining = wallets.filter(w => w.id !== id);
+            if (remaining.length > 0) {
+                await this.setActiveWallet(remaining[0].id);
+            } else {
+                localStorage.removeItem('activeWalletId');
+            }
+        }
+
+        await this.db.delete('wallet', id);
+    }
+
+    async setActiveWallet(id: string): Promise<void> {
+        localStorage.setItem('activeWalletId', id);
+    }
+
+    async getActiveWalletId(): Promise<string | null> {
+        return localStorage.getItem('activeWalletId');
+    }
+
+    async getActiveWallet(): Promise<{
+        id: string;
+        address: string;
+        encryptedPrivateKey: string;
+        accountName?: string;
+    } | null> {
+        const activeId = await this.getActiveWalletId();
+        if (!activeId) return null;
+        return await this.getWalletById(activeId);
     }
 
     // Offline balance operations

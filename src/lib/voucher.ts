@@ -2,7 +2,7 @@ import { ethers } from 'ethers';
 import { WalletManager } from './wallet';
 
 export interface CreateVoucherParams {
-    fromWallet: ethers.Wallet;
+    fromWallet: ethers.HDNodeWallet | ethers.Wallet;
     toAddress: string;
     amount: string;
 }
@@ -24,7 +24,7 @@ export class VoucherService {
      */
     static async createVoucher(params: CreateVoucherParams): Promise<{
         voucherData: VoucherQRData;
-        temporaryWallet: ethers.Wallet;
+        temporaryWallet: ethers.HDNodeWallet;
     }> {
         const { fromWallet, toAddress, amount } = params;
 
