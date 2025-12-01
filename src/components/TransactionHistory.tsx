@@ -100,18 +100,6 @@ export function TransactionHistory({
         return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
     };
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'settled':
-                return 'text-green-400';
-            case 'pending':
-                return 'text-amber-400';
-            case 'failed':
-                return 'text-red-400';
-            default:
-                return 'text-gray-400';
-        }
-    };
 
     const getStatusText = (status: string) => {
         switch (status) {
@@ -127,63 +115,68 @@ export function TransactionHistory({
     };
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="card max-w-2xl w-full max-h-[80vh] flex flex-col animate-slide-up">
+        <div className="fixed inset-0 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] z-50 flex items-center justify-center p-4 font-sans text-slate-900">
+            <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-slide-up">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold">Transaction History</h3>
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-2xl font-serif font-bold">Transaction History</h3>
                     <button
                         onClick={onClose}
-                        className="text-gray-400 hover:text-white text-2xl"
+                        className="p-2 hover:bg-slate-100 rounded-full transition-colors"
                     >
-                        ×
+                        <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
 
                 {/* Transaction List */}
-                <div className="overflow-y-auto flex-1">
+                <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar">
                     {isLoading ? (
-                        <div className="text-center py-8">
-                            <div className="inline-block w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
-                            <p className="text-gray-400 mt-2">Loading transactions...</p>
+                        <div className="text-center py-12">
+                            <div className="inline-block w-12 h-12 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin mb-4" />
+                            <p className="text-slate-500 font-medium">Loading transactions...</p>
                         </div>
                     ) : transactions.length === 0 ? (
-                        <div className="text-center py-8">
-                            <p className="text-gray-400">No transactions yet</p>
+                        <div className="text-center py-12 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200">
+                            <p className="text-slate-400 font-medium">No transactions yet</p>
                         </div>
                     ) : (
                         <div className="space-y-3">
                             {transactions.map((tx) => (
                                 <div
                                     key={tx.id}
-                                    className="glass-hover p-4 rounded-xl cursor-pointer"
+                                    className="bg-white hover:bg-slate-50 p-5 rounded-2xl transition-all shadow-sm border border-slate-100 group"
                                 >
                                     <div className="flex justify-between items-start">
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span
-                                                    className={`font-semibold ${tx.type === 'received'
-                                                        ? 'text-green-400'
-                                                        : 'text-amber-400'
+                                                    className={`font-bold text-sm px-2 py-1 rounded-lg ${tx.type === 'received'
+                                                        ? 'bg-green-100 text-green-700'
+                                                        : 'bg-amber-100 text-amber-700'
                                                         }`}
                                                 >
                                                     {tx.type === 'received' ? '↓ Received' : '↑ Sent'}
                                                 </span>
-                                                <span className={`text-xs ${getStatusColor(tx.status)}`}>
+                                                <span className={`text-xs font-medium px-2 py-1 rounded-lg ${tx.status === 'settled' ? 'bg-slate-100 text-slate-600' :
+                                                    tx.status === 'pending' ? 'bg-blue-50 text-blue-600' :
+                                                        'bg-red-50 text-red-600'
+                                                    }`}>
                                                     {getStatusText(tx.status)}
                                                 </span>
                                             </div>
 
-                                            <p className="text-sm text-gray-400">
+                                            <p className="text-sm text-slate-500 mt-2">
                                                 {tx.type === 'received' ? 'From' : 'To'}:{' '}
-                                                <span className="font-mono">
+                                                <span className="font-mono font-bold text-slate-700">
                                                     {formatAddress(
                                                         tx.type === 'received' ? tx.from : tx.to
                                                     )}
                                                 </span>
                                             </p>
 
-                                            <p className="text-xs text-gray-500 mt-1">
+                                            <p className="text-xs text-slate-400 mt-1 font-medium">
                                                 {formatDate(tx.timestamp)}
                                             </p>
 
@@ -192,25 +185,28 @@ export function TransactionHistory({
                                                     href={`https://sepolia.basescan.org/tx/${tx.txHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-xs text-primary-400 hover:underline mt-1 inline-block"
+                                                    className="text-xs text-slate-400 hover:text-slate-900 hover:underline mt-2 inline-flex items-center gap-1 transition-colors"
                                                     onClick={(e) => e.stopPropagation()}
                                                 >
-                                                    View on Explorer ↗
+                                                    View on Explorer
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                    </svg>
                                                 </a>
                                             )}
                                         </div>
 
                                         <div className="text-right">
                                             <p
-                                                className={`text-lg font-bold ${tx.type === 'received'
-                                                    ? 'text-green-400'
-                                                    : 'text-white'
+                                                className={`text-xl font-bold font-mono ${tx.type === 'received'
+                                                    ? 'text-green-600'
+                                                    : 'text-slate-900'
                                                     }`}
                                             >
                                                 {tx.type === 'received' ? '+' : '-'}
                                                 {tx.amount}
                                             </p>
-                                            <p className="text-xs text-gray-500">USDC</p>
+                                            <p className="text-xs text-slate-400 font-bold">USDC</p>
                                         </div>
                                     </div>
                                 </div>

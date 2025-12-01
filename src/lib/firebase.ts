@@ -198,6 +198,54 @@ class FirebaseService {
             settledAt: Timestamp.now() as any,
         });
     }
+
+    /**
+     * Create a new user with encrypted wallet
+     */
+    async createUser(
+        username: string,
+        encryptedWallet: string,
+        accountName: string
+    ): Promise<void> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userRef = doc(db, 'users', username.toLowerCase());
+
+        // Check if user already exists
+        const userDoc = await getDocs(query(collection(db, 'users'), where('username', '==', username.toLowerCase())));
+        if (!userDoc.empty) {
+            throw new Error('Username already exists');
+        }
+
+        await setDoc(userRef, {
+            username: username.toLowerCase(),
+            encryptedWallet,
+            accountName,
+            createdAt: Timestamp.now(),
+        });
+    }
+
+    /**
+     * Get user by username
+     */
+    async getUser(username: string): Promise<{ encryptedWallet: string; accountName: string } | null> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userRef = doc(db, 'users', username.toLowerCase());
+        const userDoc = await import('firebase/firestore').then(m => m.getDoc(userRef));
+
+        if (!userDoc.exists()) {
+            return null;
+        }
+
+        const data = userDoc.data();
+        return {
+            encryptedWallet: data.encryptedWallet,
+            accountName: data.accountName,
+        };
+    }
 }
 
 // Singleton instance

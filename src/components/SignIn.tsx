@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { ethers } from 'ethers';
+import { firebase } from '../lib/firebase';
 
 interface SignInProps {
     onComplete: (privateKey: string) => void;
@@ -8,10 +9,45 @@ interface SignInProps {
 }
 
 export function SignIn({ onComplete, onBack }: SignInProps) {
+    const [mode, setMode] = useState<'password' | 'key'>('password');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
     const [privateKey, setPrivateKey] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const handleSignIn = async () => {
+    const handlePasswordSignIn = async () => {
+        if (!username.trim() || !password) {
+            toast.error('Please enter username and password');
+            return;
+        }
+
+        setIsLoading(true);
+
+        try {
+            // 1. Get encrypted wallet from Firebase
+            const user = await firebase.getUser(username);
+
+            if (!user) {
+                toast.error('User not found');
+                setIsLoading(false);
+                return;
+            }
+
+            // 2. Decrypt wallet
+            const wallet = await ethers.Wallet.fromEncryptedJson(user.encryptedWallet, password);
+
+            // 3. Complete
+            onComplete(wallet.privateKey);
+            toast.success('Welcome back!');
+        } catch (error) {
+            console.error('Sign in error:', error);
+            toast.error('Invalid password or login failed');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleKeySignIn = async () => {
         if (!privateKey.trim()) {
             toast.error('Please enter your wallet key');
             return;
@@ -20,72 +56,129 @@ export function SignIn({ onComplete, onBack }: SignInProps) {
         setIsLoading(true);
 
         try {
-            // Validate private key
-            new ethers.Wallet(privateKey.trim());
+            // Try as mnemonic first
+            try {
+                const wallet = ethers.Wallet.fromPhrase(privateKey.trim());
+                onComplete(wallet.privateKey);
+                return;
+            } catch (e) {
+                // Not a mnemonic, try as private key
+            }
 
-            // If we get here, the key is valid
+            // Try as private key
+            new ethers.Wallet(privateKey.trim());
             onComplete(privateKey.trim());
-            toast.success('Signed in successfully!');
         } catch (error) {
-            toast.error('Invalid wallet key. Please check and try again.');
+            toast.error('Invalid wallet key or phrase');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handlePaste = async () => {
-        try {
-            const text = await navigator.clipboard.readText();
-            setPrivateKey(text);
-            toast.success('Pasted from clipboard');
-        } catch (err) {
-            toast.error('Failed to paste');
-        }
-    };
-
     return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-            <div className="card max-w-md w-full space-y-6 animate-slide-up">
-                <div>
-                    <button onClick={onBack} className="text-gray-400 hover:text-white mb-4">
-                        ← Back
-                    </button>
-                    <h2 className="text-2xl font-bold">Sign In</h2>
-                    <p className="text-gray-400 mt-1">Enter your wallet key to access your account</p>
-                </div>
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] font-sans text-slate-800">
+            <div className="max-w-md w-full bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl animate-fade-in">
+                <button
+                    onClick={onBack}
+                    className="mb-6 text-slate-500 hover:text-slate-900 flex items-center gap-2 transition-colors font-medium"
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    Back
+                </button>
 
-                <div>
-                    <div>
-                        <div className="flex justify-between items-center mb-2">
-                            <label className="block text-sm font-medium">
-                                Recovery Phrase or Private Key
-                            </label>
+                <h2 className="text-3xl font-serif font-bold mb-2 text-slate-900">Sign In</h2>
+                <p className="text-slate-500 mb-8 font-sans">Access your wallet securely.</p>
+
+                {mode === 'password' ? (
+                    <div className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Username</label>
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-lg placeholder:text-slate-300"
+                                placeholder="Your username"
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Password</label>
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-lg placeholder:text-slate-300"
+                                placeholder="Your password"
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        <button
+                            onClick={handlePasswordSignIn}
+                            disabled={isLoading}
+                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    Signing In...
+                                </>
+                            ) : (
+                                'Sign In'
+                            )}
+                        </button>
+
+                        <div className="text-center pt-4">
                             <button
-                                onClick={handlePaste}
-                                className="text-xs text-slate-500 hover:text-slate-800 font-bold"
+                                onClick={() => setMode('key')}
+                                className="text-slate-500 hover:text-slate-900 text-sm font-medium underline"
                             >
-                                Paste
+                                I want to use my recovery phrase instead
                             </button>
                         </div>
-                        <textarea
-                            value={privateKey}
-                            onChange={(e) => setPrivateKey(e.target.value)}
-                            className="w-full p-4 rounded-xl border border-slate-200 focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none font-mono text-sm min-h-[120px]"
-                            placeholder="Enter your 12-word phrase or private key..."
-                        />
                     </div>
+                ) : (
+                    <div className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Recovery Phrase or Private Key</label>
+                            <textarea
+                                value={privateKey}
+                                onChange={(e) => setPrivateKey(e.target.value)}
+                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-sm font-mono min-h-[120px] placeholder:text-slate-300"
+                                placeholder="Enter your 12-word phrase..."
+                                disabled={isLoading}
+                            />
+                        </div>
 
-                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-700">
-                        💡 You can enter your 12-word recovery phrase (separated by spaces) or a raw private key.
-                    </div>        </div>
+                        <button
+                            onClick={handleKeySignIn}
+                            disabled={isLoading}
+                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    Recovering...
+                                </>
+                            ) : (
+                                'Recover Wallet'
+                            )}
+                        </button>
 
-                <button
-                    onClick={handleSignIn}
-                    disabled={isLoading || !privateKey.trim()}
-                    className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {isLoading ? 'Signing In...' : 'Sign In'}
-                </button>
+                        <div className="text-center pt-4">
+                            <button
+                                onClick={() => setMode('password')}
+                                className="text-slate-500 hover:text-slate-900 text-sm font-medium underline"
+                            >
+                                Back to Username/Password
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

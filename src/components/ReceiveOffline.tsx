@@ -88,62 +88,70 @@ export function ReceiveOffline({
     };
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="card max-w-md w-full space-y-4 animate-slide-up">
+        <div className="fixed inset-0 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] z-50 flex items-center justify-center p-4 font-sans text-slate-900">
+            <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-md space-y-6 animate-slide-up">
                 {/* Header */}
                 <div className="flex justify-between items-center">
-                    <h3 className="text-xl font-bold">Receive Offline</h3>
+                    <h3 className="text-2xl font-serif font-bold">Receive Offline</h3>
                     <button
                         onClick={onClose}
-                        className="text-gray-400 hover:text-white text-2xl"
+                        className="p-2 hover:bg-slate-100 rounded-full transition-colors"
                     >
-                        ×
+                        <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
 
                 {/* Show Address Step */}
                 {step === 'show-address' && (
-                    <div className="space-y-4">
-                        <div className="text-center">
-                            <p className="text-gray-400 mb-2">1. Show this to sender</p>
-                            <div className="bg-white p-4 rounded-xl inline-block">
-                                <QRCodeSVG value={addressQR} size={250} level="H" />
+                    <div className="space-y-6">
+                        <div className="text-center space-y-4">
+                            <p className="text-slate-600 font-medium">1. Show this to sender</p>
+                            <div className="bg-white p-6 rounded-3xl shadow-lg inline-block border-2 border-slate-100">
+                                <QRCodeSVG value={addressQR} size={240} level="H" />
                             </div>
-                            <p className="text-xs text-gray-500 mt-4 font-mono">
+                            <p className="text-xs text-slate-400 font-mono bg-slate-50 py-2 px-4 rounded-full inline-block">
                                 {address}
                             </p>
                         </div>
 
-                        <div className="h-px bg-gradient-to-r from-transparent via-gray-600 to-transparent" />
+                        <div className="h-px bg-slate-200" />
 
                         <button
                             onClick={() => setStep('scan-voucher')}
-                            className="btn-primary w-full"
+                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
                         >
                             2. Scan Voucher QR
                         </button>
 
-                        <div className="p-3 bg-primary-500/10 border border-primary-500/30 rounded-lg text-sm text-gray-300">
-                            💡 First, let sender scan your address. Then scan the voucher they generate.
+                        <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl text-blue-700 text-sm font-medium flex gap-3">
+                            <span className="text-xl">💡</span>
+                            First, let sender scan your address. Then scan the voucher they generate.
                         </div>
                     </div>
                 )}
 
                 {/* Scan Voucher Step */}
                 {step === 'scan-voucher' && (
-                    <QRScanner
-                        onScan={handleVoucherScanned}
-                        onClose={() => setStep('show-address')}
-                    />
+                    <div className="space-y-4">
+                        <div className="bg-slate-900 rounded-3xl overflow-hidden shadow-xl">
+                            <QRScanner
+                                onScan={handleVoucherScanned}
+                                onClose={() => setStep('show-address')}
+                            />
+                        </div>
+                        <p className="text-center text-slate-500 text-sm">Scan the sender's voucher QR</p>
+                    </div>
                 )}
 
                 {/* Complete Step */}
                 {step === 'complete' && (
-                    <div className="space-y-4">
+                    <div className="space-y-6">
                         <div className="text-center">
-                            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-small">
                                 <svg
-                                    className="w-8 h-8 text-green-400"
+                                    className="w-10 h-10 text-green-600"
                                     fill="none"
                                     stroke="currentColor"
                                     viewBox="0 0 24 24"
@@ -151,40 +159,48 @@ export function ReceiveOffline({
                                     <path
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
-                                        strokeWidth={2}
+                                        strokeWidth={3}
                                         d="M5 13l4 4L19 7"
                                     />
                                 </svg>
                             </div>
 
-                            <h4 className="text-2xl font-bold text-green-400 mb-2">
+                            <h4 className="text-2xl font-bold text-slate-900 mb-2">
                                 Voucher Received!
                             </h4>
 
-                            <p className="text-3xl font-bold my-4">
-                                +{voucherAmount} <span className="text-xl">USDC</span>
-                            </p>
+                            <div className="my-6">
+                                <p className="text-4xl font-bold font-mono text-slate-900">
+                                    +{voucherAmount} <span className="text-2xl text-slate-500">USDC</span>
+                                </p>
+                            </div>
 
-                            <p className="text-sm text-gray-400">From</p>
-                            <p className="text-xs text-gray-500 font-mono">
-                                {senderAddress.slice(0, 10)}...{senderAddress.slice(-8)}
-                            </p>
+                            <div className="bg-slate-50 rounded-2xl p-4 inline-block">
+                                <p className="text-sm text-slate-500 mb-1">From</p>
+                                <p className="text-xs text-slate-900 font-mono font-bold">
+                                    {senderAddress.slice(0, 10)}...{senderAddress.slice(-8)}
+                                </p>
+                            </div>
                         </div>
 
-                        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-sm">
-                            ⏳ Funds will be settled on-chain when you go online
+                        <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-sm font-medium flex gap-3">
+                            <span className="text-xl">⏳</span>
+                            Funds will be settled on-chain when you go online
                         </div>
 
-                        <button onClick={handleComplete} className="btn-primary w-full">
+                        <button
+                            onClick={handleComplete}
+                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
+                        >
                             Done
                         </button>
                     </div>
                 )}
 
                 {isProcessing && (
-                    <div className="text-center py-4">
-                        <div className="inline-block w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
-                        <p className="text-gray-400 mt-2">Processing voucher...</p>
+                    <div className="text-center py-12">
+                        <div className="inline-block w-12 h-12 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin mb-4" />
+                        <p className="text-slate-500 font-medium">Processing voucher...</p>
                     </div>
                 )}
             </div>

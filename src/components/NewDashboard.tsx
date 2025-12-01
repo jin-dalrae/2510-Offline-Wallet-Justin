@@ -90,9 +90,19 @@ export function NewDashboard({
             )}
 
             {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-5xl font-serif font-bold mb-2">justin</h1>
-                <p className="text-lg text-slate-800 font-medium">Let's reinvent Cash with Tech.</p>
+            <div className="mb-6 flex justify-between items-start">
+                <div>
+                    <h1 className="text-5xl font-serif font-bold mb-2">justin</h1>
+                    <p className="text-lg text-slate-800 font-medium">Let's reinvent Cash with Tech.</p>
+                </div>
+                <button
+                    onClick={() => setShowMenu(true)}
+                    className="p-2 hover:bg-white/50 rounded-full transition-colors"
+                >
+                    <svg className="w-8 h-8 text-slate-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </button>
             </div>
 
             {/* Main Content */}
@@ -159,7 +169,9 @@ export function NewDashboard({
                 {/* Off-line Allowance */}
                 <div className="bg-white/60 backdrop-blur-sm rounded-3xl p-6 shadow-sm">
                     <h3 className="text-lg font-bold mb-2">Off-line allowance</h3>
-                    <p className="text-2xl font-bold font-mono">${balance.available}</p>
+                    <p className="text-2xl font-bold font-mono">
+                        {showBalance ? `$${balance.available}` : '••••••'}
+                    </p>
                     <button
                         onClick={onReceiveOffline}
                         className="mt-4 w-full bg-slate-900 text-white py-3 rounded-xl font-medium hover:bg-slate-800 transition"
@@ -169,10 +181,26 @@ export function NewDashboard({
                 </div>
 
                 {/* Assets List - Only show if balance > 0 */}
-                {(parseFloat(balance.ethBalance) > 0 || parseFloat(balance.cbBtcBalance) > 0 || parseFloat(balance.eurcBalance) > 0) && (
+                {(parseFloat(balance.ethBalance) > 0 || parseFloat(balance.cbBtcBalance) > 0 || parseFloat(balance.eurcBalance) > 0 || parseFloat(balance.onChain) > 0) && (
                     <div className="bg-white/60 backdrop-blur-sm rounded-3xl p-6 shadow-sm">
                         <h3 className="text-lg font-bold mb-4">Assets</h3>
                         <div className="space-y-4">
+                            {parseFloat(balance.onChain) > 0 && (
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">
+                                            $
+                                        </div>
+                                        <div>
+                                            <p className="font-bold">USDC</p>
+                                            <p className="text-xs text-slate-500">USDC</p>
+                                        </div>
+                                    </div>
+                                    <p className="font-mono font-bold">
+                                        {showBalance ? balance.onChain : '••••••'}
+                                    </p>
+                                </div>
+                            )}
                             {parseFloat(balance.ethBalance) > 0 && (
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
@@ -184,7 +212,9 @@ export function NewDashboard({
                                             <p className="text-xs text-slate-500">ETH</p>
                                         </div>
                                     </div>
-                                    <p className="font-mono font-bold">{balance.ethBalance}</p>
+                                    <p className="font-mono font-bold">
+                                        {showBalance ? balance.ethBalance : '••••••'}
+                                    </p>
                                 </div>
                             )}
                             {parseFloat(balance.cbBtcBalance) > 0 && (
@@ -198,7 +228,9 @@ export function NewDashboard({
                                             <p className="text-xs text-slate-500">cbBTC</p>
                                         </div>
                                     </div>
-                                    <p className="font-mono font-bold">{balance.cbBtcBalance}</p>
+                                    <p className="font-mono font-bold">
+                                        {showBalance ? balance.cbBtcBalance : '••••••'}
+                                    </p>
                                 </div>
                             )}
                             {parseFloat(balance.eurcBalance) > 0 && (
@@ -212,7 +244,9 @@ export function NewDashboard({
                                             <p className="text-xs text-slate-500">EURC</p>
                                         </div>
                                     </div>
-                                    <p className="font-mono font-bold">{balance.eurcBalance}</p>
+                                    <p className="font-mono font-bold">
+                                        {showBalance ? balance.eurcBalance : '••••••'}
+                                    </p>
                                 </div>
                             )}
                         </div>
