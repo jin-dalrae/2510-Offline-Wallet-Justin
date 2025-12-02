@@ -13,6 +13,10 @@ import { SendOffline } from './components/SendOffline';
 import { ReceiveOffline } from './components/ReceiveOffline';
 import { TransactionHistory } from './components/TransactionHistory';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { ProtectedAdminRoute } from './components/admin/ProtectedAdminRoute';
+import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminOverview } from './components/admin/AdminOverview';
+import { UserManagement } from './components/admin/UserManagement';
 import { firebase } from './lib/firebase';
 import { storage } from './lib/storage';
 import { v4 as uuidv4 } from 'uuid';
@@ -303,6 +307,93 @@ function App() {
                         <PrivacyPolicy
                             onBack={() => navigate(wallet.isUnlocked ? '/dashboard' : '/')}
                         />
+                    }
+                />
+
+                {/* Admin Routes */}
+                <Route
+                    path="/admin"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <AdminOverview />
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/users"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <UserManagement />
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/transactions"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <div className="space-y-6">
+                                    <h1 className="text-3xl font-bold text-slate-900">Transaction Monitor</h1>
+                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                                        <p className="text-slate-600">Coming soon...</p>
+                                    </div>
+                                </div>
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/settlements"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <div className="space-y-6">
+                                    <h1 className="text-3xl font-bold text-slate-900">Settlement Management</h1>
+                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                                        <p className="text-slate-600">Coming soon...</p>
+                                    </div>
+                                </div>
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/health"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <div className="space-y-6">
+                                    <h1 className="text-3xl font-bold text-slate-900">System Health</h1>
+                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                                        <p className="text-slate-600">Coming soon...</p>
+                                    </div>
+                                </div>
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/audit"
+                    element={
+                        <ProtectedAdminRoute>
+                            <AdminDashboard>
+                                <div className="space-y-6">
+                                    <h1 className="text-3xl font-bold text-slate-900">Audit Log</h1>
+                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                                        <p className="text-slate-600">Coming soon...</p>
+                                    </div>
+                                </div>
+                            </AdminDashboard>
+                        </ProtectedAdminRoute>
                     }
                 />
             </Routes>

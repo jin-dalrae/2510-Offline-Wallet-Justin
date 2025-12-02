@@ -5,7 +5,7 @@ import {
     collection,
     doc,
     setDoc,
-
+    getDoc,
     getDocs,
     updateDoc,
     deleteDoc,
@@ -13,8 +13,10 @@ import {
     where,
     orderBy,
     Timestamp,
+    limit,
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, Auth } from 'firebase/auth';
+import { UserRole, AuditAction, AuditTargetType } from '../types/admin';
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -234,7 +236,7 @@ class FirebaseService {
 
         const db = this.getDb();
         const userRef = doc(db, 'users', username.toLowerCase());
-        const userDoc = await import('firebase/firestore').then(m => m.getDoc(userRef));
+        const userDoc = await getDoc(userRef);
 
         if (!userDoc.exists()) {
             return null;
@@ -245,6 +247,239 @@ class FirebaseService {
             encryptedWallet: data.encryptedWallet,
             accountName: data.accountName,
         };
+    }
+
+    // ==================== ADMIN METHODS ====================
+
+    /**
+     * Get user role (admin or user)
+     */
+    async getUserRole(username: string): Promise<UserRole> {
+        if (!this.isInitialized()) return 'user';
+
+        try {
+            const db = this.getDb();
+            const userRef = doc(db, 'users', username.toLowerCase());
+            const userDoc = await getDoc(userRef);
+
+            if (!userDoc.exists()) {
+                return 'user';
+            }
+
+            const data = userDoc.data();
+            return (data.role as UserRole) || 'user';
+        } catch (error) {
+            console.error('Error getting user role:', error);
+            return 'user';
+        }
+    }
+
+    /**
+     * Set user role
+     */
+    async setUserRole(username: string, role: UserRole): Promise<void> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userRef = doc(db, 'users', username.toLowerCase());
+
+        await updateDoc(userRef, {
+            role,
+        });
+    }
+
+    /**
+     * Log admin action to audit trail
+     */
+    async logAdminAction(params: {
+        adminId: string;
+        adminUsername: string;
+        action: AuditAction;
+        targetType: AuditTargetType;
+        targetId: string;
+        details: Record<string, any>;
+    }): Promise<void> {
+        if (!this.isInitialized()) return;
+
+        try {
+            const db = this.getDb();
+            const auditRef = doc(collection(db, 'admin_audit_log'));
+
+            await setDoc(auditRef, {
+                id: auditRef.id,
+                timestamp: Timestamp.now(),
+                adminId: params.adminId,
+                adminUsername: params.adminUsername,
+                action: params.action,
+                targetType: params.targetType,
+                targetId: params.targetId,
+                details: params.details,
+                ipAddress: '', // Can be populated from request in production
+                userAgent: navigator.userAgent,
+            });
+        } catch (error) {
+            console.error('Error logging admin action:', error);
+        }
+    }
+
+    /**
+     * Get all users (for admin dashboard)
+     */
+    async getAllUsers(limitCount = 50): Promise<any[]> {
+        if (!this.isInitialized()) return [];
+
+        try {
+            const db = this.getDb();
+            const usersCollection = collection(db, 'users');
+            const q = query(
+                usersCollection,
+                orderBy('createdAt', 'desc'),
+                limit(limitCount)
+            );
+
+            const snapshot = await getDocs(q);
+            const users: any[] = [];
+
+            snapshot.forEach((doc) => {
+                users.push({
+                    id: doc.id,
+                    ...doc.data(),
+                    createdAt: doc.data().createdAt?.toMillis() || Date.now(),
+                });
+            });
+
+            return users;
+        } catch (error) {
+            console.error('Error getting all users:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get all transactions (for admin dashboard)
+     */
+    async getAllTransactions(limitCount = 100): Promise<any[]> {
+        if (!this.isInitialized()) return [];
+
+        try {
+            const db = this.getDb();
+            const txCollection = collection(db, 'pending_transactions');
+            const q = query(
+                txCollection,
+                orderBy('createdAt', 'desc'),
+                limit(limitCount)
+            );
+
+            const snapshot = await getDocs(q);
+            const transactions: any[] = [];
+
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                transactions.push({
+                    id: doc.id,
+                    ...data,
+                    timestamp: data.createdAt?.toMillis() || Date.now(),
+                    createdAt: data.createdAt?.toMillis() || Date.now(),
+                });
+            });
+
+            return transactions;
+        } catch (error) {
+            console.error('Error getting all transactions:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Suspend user
+     */
+    async suspendUser(
+        userId: string,
+        reason: string,
+        adminId: string
+    ): Promise<void> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userRef = doc(db, 'users', userId.toLowerCase());
+
+        await updateDoc(userRef, {
+            status: 'suspended',
+            suspendedAt: Timestamp.now(),
+            suspendedBy: adminId,
+            suspensionReason: reason,
+        });
+
+        // Log action
+        await this.logAdminAction({
+            adminId,
+            adminUsername: adminId,
+            action: 'suspend_user',
+            targetType: 'user',
+            targetId: userId,
+            details: { reason },
+        });
+    }
+
+    /**
+     * Unsuspend user
+     */
+    async unsuspendUser(userId: string, adminId: string): Promise<void> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userRef = doc(db, 'users', userId.toLowerCase());
+
+        await updateDoc(userRef, {
+            status: 'active',
+            suspendedAt: null,
+            suspendedBy: null,
+            suspensionReason: null,
+        });
+
+        // Log action
+        await this.logAdminAction({
+            adminId,
+            adminUsername: adminId,
+            action: 'unsuspend_user',
+            targetType: 'user',
+            targetId: userId,
+            details: {},
+        });
+    }
+
+    /**
+     * Get audit log
+     */
+    async getAuditLog(limitCount = 100): Promise<any[]> {
+        if (!this.isInitialized()) return [];
+
+        try {
+            const db = this.getDb();
+            const auditCollection = collection(db, 'admin_audit_log');
+            const q = query(
+                auditCollection,
+                orderBy('timestamp', 'desc'),
+                limit(limitCount)
+            );
+
+            const snapshot = await getDocs(q);
+            const logs: any[] = [];
+
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                logs.push({
+                    id: doc.id,
+                    ...data,
+                    timestamp: data.timestamp?.toMillis() || Date.now(),
+                });
+            });
+
+            return logs;
+        } catch (error) {
+            console.error('Error getting audit log:', error);
+            return [];
+        }
     }
 }
 

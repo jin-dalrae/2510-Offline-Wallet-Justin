@@ -110,6 +110,18 @@ export function NewDashboard({
 
     const totalBalance = parseFloat(balance.onChain) + parseFloat(balance.offlineReceived) - parseFloat(balance.offlineSent);
 
+    const handleWalletChange = async (walletId: string) => {
+        try {
+            await storage.setActiveWallet(walletId);
+            setActiveWalletId(walletId);
+            setShowWalletList(false);
+            toast.success('Active wallet updated');
+        } catch (error) {
+            console.error('Failed to switch wallet:', error);
+            toast.error('Failed to switch wallet');
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-100 font-sans text-slate-900 p-6">
             {/* Side Menu Overlay */}
@@ -413,6 +425,15 @@ export function NewDashboard({
                         </button>
                     </div>
                 </div>
+            )}
+
+            {/* Wallet List Modal */}
+            {showWalletList && (
+                <WalletList
+                    activeWalletId={activeWalletId}
+                    onWalletChange={handleWalletChange}
+                    onClose={() => setShowWalletList(false)}
+                />
             )}
         </div>
     );
