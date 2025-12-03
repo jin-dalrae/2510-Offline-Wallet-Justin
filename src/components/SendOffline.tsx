@@ -176,95 +176,98 @@ export function SendOffline({
                     </button>
                 </div>
 
-                {/* Amount Step */}
-                {step === 'amount' && (
-                    <div className="space-y-6">
-                        <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">
-                                Amount (USDC)
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                value={amount}
-                                onChange={(e) => setAmount(e.target.value)}
-                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-bold text-3xl placeholder:text-slate-300"
-                                placeholder="0.00"
-                                autoFocus
-                            />
-                            <p className="text-sm text-slate-500 mt-2 font-medium ml-1">
-                                Available: {availableBalance} USDC
-                            </p>
-                        </div>
-
-                        {error && (
-                            <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-medium flex items-center gap-2">
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                {error}
-                            </div>
-                        )}
-
-                        <button
-                            onClick={handleAmountNext}
-                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
-                        >
-                            Next: Scan Recipient
-                        </button>
-                    </div>
-                )}
-
-                {/* Scan Address Step */}
-                {step === 'scan-address' && (
-                    <div className="space-y-4">
-                        <div className="bg-slate-900 rounded-3xl overflow-hidden shadow-xl">
-                            <QRScanner
-                                onScan={handleAddressScanned}
-                                onClose={() => setStep('amount')}
-                            />
-                        </div>
-                        <p className="text-center text-slate-500 text-sm">Scan the recipient's QR code</p>
-                    </div>
-                )}
-
-                {/* Show Voucher Step */}
-                {step === 'show-voucher' && (
-                    <div className="space-y-6">
-                        <div className="text-center space-y-4">
-                            <p className="text-slate-600 font-medium">Show this QR code to receiver</p>
-                            <div className="bg-white p-6 rounded-3xl shadow-lg inline-block border-2 border-slate-100">
-                                <QRCodeSVG value={voucherQR} size={240} level="H" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-slate-500 mb-1">
-                                    Sending <span className="text-slate-900 font-bold text-lg">{amount} USDC</span> to
-                                </p>
-                                <p className="text-xs text-slate-400 font-mono bg-slate-50 py-2 px-4 rounded-full inline-block">
-                                    {recipientAddress.slice(0, 10)}...{recipientAddress.slice(-8)}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-sm font-medium flex gap-3">
-                            <span className="text-xl">⚠️</span>
-                            Only the intended recipient can claim this voucher
-                        </div>
-
-                        <button
-                            onClick={handleComplete}
-                            className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
-                        >
-                            Done
-                        </button>
-                    </div>
-                )}
-
-                {isLoading && (
+                {/* Loading State */}
+                {isLoading ? (
                     <div className="text-center py-12">
                         <div className="inline-block w-12 h-12 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin mb-4" />
                         <p className="text-slate-500 font-medium">Generating voucher...</p>
                     </div>
+                ) : (
+                    <>
+                        {/* Amount Step */}
+                        {step === 'amount' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">
+                                        Amount (USDC)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={amount}
+                                        onChange={(e) => setAmount(e.target.value)}
+                                        className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-bold text-3xl placeholder:text-slate-300"
+                                        placeholder="0.00"
+                                        autoFocus
+                                    />
+                                    <p className="text-sm text-slate-500 mt-2 font-medium ml-1">
+                                        Available: {availableBalance} USDC
+                                    </p>
+                                </div>
+
+                                {error && (
+                                    <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-medium flex items-center gap-2">
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        {error}
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={handleAmountNext}
+                                    className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
+                                >
+                                    Next: Scan Recipient
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Scan Address Step */}
+                        {step === 'scan-address' && (
+                            <div className="space-y-4">
+                                <div className="bg-slate-900 rounded-3xl overflow-hidden shadow-xl">
+                                    <QRScanner
+                                        onScan={handleAddressScanned}
+                                        onClose={() => setStep('amount')}
+                                    />
+                                </div>
+                                <p className="text-center text-slate-500 text-sm">Scan the recipient's QR code</p>
+                            </div>
+                        )}
+
+                        {/* Show Voucher Step */}
+                        {step === 'show-voucher' && (
+                            <div className="space-y-6">
+                                <div className="text-center space-y-4">
+                                    <p className="text-slate-600 font-medium">Show this QR code to receiver</p>
+                                    <div className="bg-white p-6 rounded-3xl shadow-lg inline-block border-2 border-slate-100">
+                                        <QRCodeSVG value={voucherQR} size={240} level="H" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-slate-500 mb-1">
+                                            Sending <span className="text-slate-900 font-bold text-lg">{amount} USDC</span> to
+                                        </p>
+                                        <p className="text-xs text-slate-400 font-mono bg-slate-50 py-2 px-4 rounded-full inline-block">
+                                            {recipientAddress.slice(0, 10)}...{recipientAddress.slice(-8)}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-sm font-medium flex gap-3">
+                                    <span className="text-xl">⚠️</span>
+                                    Only the intended recipient can claim this voucher
+                                </div>
+
+                                <button
+                                    onClick={handleComplete}
+                                    className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
         </div>

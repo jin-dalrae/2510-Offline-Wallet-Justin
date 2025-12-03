@@ -15,7 +15,7 @@ import {
     Timestamp,
     limit,
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, Auth } from 'firebase/auth';
+import { getAuth, signInAnonymously, GoogleAuthProvider, signInWithPopup, Auth, UserCredential } from 'firebase/auth';
 import { UserRole, AuditAction, AuditTargetType } from '../types/admin';
 
 const firebaseConfig = {
@@ -247,6 +247,61 @@ class FirebaseService {
             encryptedWallet: data.encryptedWallet,
             accountName: data.accountName,
         };
+    }
+
+    /**
+     * Sign in with Google OAuth
+     */
+    async signInWithGoogle(): Promise<UserCredential> {
+        if (!this.auth) throw new Error('Firebase Auth not initialized');
+
+        const provider = new GoogleAuthProvider();
+        return await signInWithPopup(this.auth, provider);
+    }
+
+    /**
+     * Get or create user with Google account
+     */
+    async getOrCreateGoogleUser(
+        googleUser: UserCredential['user'],
+        encryptedWallet: string
+    ): Promise<{ encryptedWallet: string; accountName: string; isNewUser: boolean }> {
+        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+
+        const db = this.getDb();
+        const userId = `google_${googleUser.uid}`;
+        const userRef = doc(db, 'users', userId);
+        const userDoc = await getDoc(userRef);
+
+        if (userDoc.exists()) {
+            // Existing user
+            const data = userDoc.data();
+            return {
+                encryptedWallet: data.encryptedWallet,
+                accountName: data.accountName,
+                isNewUser: false,
+            };
+        } else {
+            // New user - create account
+            const accountName = googleUser.displayName || googleUser.email?.split('@')[0] || 'User';
+
+            await setDoc(userRef, {
+                username: userId,
+                encryptedWallet,
+                accountName,
+                email: googleUser.email,
+                googleUid: googleUser.uid,
+                photoURL: googleUser.photoURL,
+                createdAt: Timestamp.now(),
+                authProvider: 'google',
+            });
+
+            return {
+                encryptedWallet,
+                accountName,
+                isNewUser: true,
+            };
+        }
     }
 
     // ==================== ADMIN METHODS ====================
