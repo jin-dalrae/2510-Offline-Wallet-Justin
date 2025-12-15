@@ -12,6 +12,7 @@ export interface BalanceState {
     cbBtcBalance: string;
     eurcBalance: string;
     isLoading: boolean;
+    total?: string; // Derived field
 }
 
 export function useBalance(address: string | null, isOnline: boolean) {

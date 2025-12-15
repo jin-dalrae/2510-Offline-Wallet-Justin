@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
@@ -7,16 +7,27 @@ import { ethers } from 'ethers';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 
+import {
+    blockchain,
+    USDC_CONTRACT_ADDRESS,
+    CBBTC_CONTRACT_ADDRESS,
+    EURC_CONTRACT_ADDRESS,
+} from '../lib/blockchain';
+import { firebase } from '../lib/firebase';
+import { BalanceState } from '../hooks/useBalance';
+
 interface SendOfflineProps {
     wallet: ethers.HDNodeWallet | ethers.Wallet;
-    availableBalance: string;
+    balance: BalanceState;
+    isOnline: boolean;
     onClose: () => void;
     onSuccess: () => void;
 }
 
 export function SendOffline({
     wallet,
-    availableBalance,
+    balance,
+    isOnline,
     onClose,
     onSuccess,
 }: SendOfflineProps) {
@@ -24,14 +35,25 @@ export function SendOffline({
         'amount' | 'scan-address' | 'show-voucher' | 'complete'
     >('amount');
     const [amount, setAmount] = useState('');
+    const [currency, setCurrency] = useState<'USDC' | 'EURC' | 'cbBTC'>('USDC');
     const [recipientAddress, setRecipientAddress] = useState('');
     const [voucherQR, setVoucherQR] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
 
+    const getAvailableBalance = () => {
+        switch (currency) {
+            case 'USDC': return parseFloat(balance.available);
+            case 'EURC': return parseFloat(balance.eurcBalance);
+            case 'cbBTC': return parseFloat(balance.cbBtcBalance);
+            default: return 0;
+        }
+    };
+
     const handleAmountNext = () => {
         const amountNum = parseFloat(amount);
-        const availableNum = parseFloat(availableBalance);
+        const availableNum = getAvailableBalance();
+
 
         // Input validation
         if (!amount || amount.trim() === '') {
@@ -44,26 +66,27 @@ export function SendOffline({
             return;
         }
 
-        // Minimum amount validation (0.01 USDC)
         if (amountNum < 0.01) {
-            setError('Minimum amount is 0.01 USDC');
+            setError(`Minimum amount is 0.01 ${currency}`);
             return;
         }
 
-        // Check offline allowance
-        const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
-        if (offlineAllowanceData) {
-            const { limit, spent } = JSON.parse(offlineAllowanceData);
-            const availableOffline = limit - spent;
-            if (amountNum > availableOffline) {
-                setError(`Insufficient offline allowance. Available: $${availableOffline.toFixed(2)}`);
-                return;
+        // Check offline allowance ONLY if offline
+        if (!isOnline) {
+            const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
+            if (offlineAllowanceData) {
+                const { limit, spent } = JSON.parse(offlineAllowanceData);
+                const availableOffline = limit - spent;
+                if (amountNum > availableOffline) {
+                    setError(`Insufficient offline allowance. Available: $${availableOffline.toFixed(2)}`);
+                    return;
+                }
             }
         }
 
         // Maximum amount validation (10,000 USDC per transaction)
         if (amountNum > 10000) {
-            setError('Maximum amount is 10,000 USDC per transaction');
+            setError(`Maximum amount is 10,000 ${currency} per transaction`);
             return;
         }
 
@@ -76,7 +99,11 @@ export function SendOffline({
         setStep('scan-address');
     };
 
+    const processingRef = useRef(false);
+
     const handleAddressScanned = (qrData: string) => {
+        if (processingRef.current) return;
+
         try {
             const address = VoucherService.decodeAddress(qrData);
 
@@ -85,22 +112,91 @@ export function SendOffline({
                 return;
             }
 
+            processingRef.current = true;
             setRecipientAddress(address);
-            generateVoucher(address);
+            handleSend(address).finally(() => {
+                processingRef.current = false;
+            });
         } catch (err) {
             toast.error('Failed to decode address: ' + (err as Error).message);
         }
     };
 
-    const generateVoucher = async (toAddress: string) => {
+    const handleSend = async (toAddress: string) => {
         setIsLoading(true);
 
         try {
+            if (isOnline) {
+                // ONLINE SEND LOGIC
+                let tokenAddress = USDC_CONTRACT_ADDRESS;
+                if (currency === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
+                if (currency === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
+
+                // Check Gas (ETH)
+                const hasGas = await blockchain.hasEnoughGas(wallet.address);
+                if (!hasGas) {
+                    throw new Error('Insufficient ETH for gas fees');
+                }
+
+                // Send Transaction
+                const tx = await blockchain.transferERC20(
+                    wallet as any, // Cast to satisfy type if needed
+                    tokenAddress,
+                    toAddress,
+                    amount
+                );
+
+                // Save pending transaction (so it shows in UI immediately)
+                const txId = uuidv4();
+                const deviceId = storage.getDeviceId();
+
+                await storage.addPendingTransaction({
+                    id: txId,
+                    type: 'sent',
+                    from: wallet.address,
+                    to: toAddress,
+                    amount,
+                    timestamp: Date.now(),
+                    status: 'settled', // Assume settled effectively once broadcast for UI purposes
+                    txHash: tx.hash,
+                    deviceId,
+                    voucherData: {
+                        token: currency, // Store token symbol for UI
+                    } as any // Partial voucher data just for token symbol
+                });
+
+                // Sync with Firebase
+                try {
+                    await firebase.initialize();
+                    await firebase.addPendingTransaction({
+                        id: txId,
+                        from: wallet.address,
+                        to: toAddress,
+                        amount,
+                        status: 'settled',
+                        settledTxHash: tx.hash,
+                        deviceId,
+                        voucherData: {
+                            token: currency,
+                        } as any
+                    });
+                } catch (e) {
+                    console.error('Failed to sync online transaction to Firebase:', e);
+                    // Don't fail the whole flow if Firebase sync fails, as local storage is updated
+                }
+
+                toast.success('Transaction sent!');
+                handleComplete();
+                return;
+            }
+
+            // OFFLINE VOUCHER LOGIC
             // Create voucher
             const { voucherData } = await VoucherService.createVoucher({
                 fromWallet: wallet,
                 toAddress,
                 amount,
+                token: currency, // Pass selected currency
             });
 
             // Encode for QR
@@ -149,7 +245,7 @@ export function SendOffline({
             toast.success('Voucher created!');
         } catch (err) {
             setError((err as Error).message);
-            toast.error('Failed to create voucher');
+            toast.error((err as Error).message || 'Failed to send');
         } finally {
             setIsLoading(false);
         }
@@ -161,11 +257,12 @@ export function SendOffline({
     };
 
     return (
-        <div className="fixed inset-0 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] z-50 flex items-center justify-center p-4 font-sans text-slate-900">
-            <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-md space-y-6 animate-slide-up">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 font-sans text-slate-900">
+            <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" onClick={onClose} />
+            <div className="relative bg-white rounded-[2.5rem] p-8 shadow-2xl w-full max-w-md space-y-6 animate-slide-up">
                 {/* Header */}
                 <div className="flex justify-between items-center">
-                    <h3 className="text-2xl font-serif font-bold">Send Offline</h3>
+                    <h3 className="text-2xl font-serif font-bold">{isOnline ? 'Send Money' : 'Send Offline'}</h3>
                     <button
                         onClick={onClose}
                         className="p-2 hover:bg-slate-100 rounded-full transition-colors"
@@ -188,8 +285,23 @@ export function SendOffline({
                         {step === 'amount' && (
                             <div className="space-y-6">
                                 <div>
+                                    <div className="flex gap-2 mb-4 p-1 bg-slate-100 rounded-xl">
+                                        {(['USDC', 'EURC', 'cbBTC'] as const).map((curr) => (
+                                            <button
+                                                key={curr}
+                                                onClick={() => setCurrency(curr)}
+                                                className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${currency === curr
+                                                    ? 'bg-white text-slate-900 shadow-sm'
+                                                    : 'text-slate-500 hover:text-slate-700'
+                                                    }`}
+                                            >
+                                                {curr}
+                                            </button>
+                                        ))}
+                                    </div>
+
                                     <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">
-                                        Amount (USDC)
+                                        Amount ({currency})
                                     </label>
                                     <input
                                         type="number"
@@ -201,7 +313,7 @@ export function SendOffline({
                                         autoFocus
                                     />
                                     <p className="text-sm text-slate-500 mt-2 font-medium ml-1">
-                                        Available: {availableBalance} USDC
+                                        Available: {getAvailableBalance().toFixed(2)} {currency}
                                     </p>
                                 </div>
 
@@ -233,6 +345,49 @@ export function SendOffline({
                                     />
                                 </div>
                                 <p className="text-center text-slate-500 text-sm">Scan the recipient's QR code</p>
+
+                                <div className="relative py-2">
+                                    <div className="absolute inset-0 flex items-center">
+                                        <div className="w-full border-t border-slate-200" />
+                                    </div>
+                                    <div className="relative flex justify-center text-xs uppercase">
+                                        <span className="bg-white px-2 text-slate-400 font-bold">Or enter wallet address</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="0x..."
+                                        className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-mono focus:border-slate-900 focus:ring-0 outline-none transition-colors"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                const val = (e.target as HTMLInputElement).value;
+                                                if (ethers.isAddress(val)) {
+                                                    setRecipientAddress(val);
+                                                    handleSend(val);
+                                                } else {
+                                                    toast.error('Invalid address');
+                                                }
+                                            }
+                                        }}
+                                    />
+                                    <button
+                                        onClick={(e) => {
+                                            const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                                            const val = input.value;
+                                            if (ethers.isAddress(val)) {
+                                                setRecipientAddress(val);
+                                                handleSend(val);
+                                            } else {
+                                                toast.error('Invalid address');
+                                            }
+                                        }}
+                                        className="bg-slate-900 text-white px-4 rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors"
+                                    >
+                                        Go
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -246,9 +401,9 @@ export function SendOffline({
                                     </div>
                                     <div>
                                         <p className="text-sm text-slate-500 mb-1">
-                                            Sending <span className="text-slate-900 font-bold text-lg">{amount} USDC</span> to
+                                            Sending <span className="text-slate-900 font-bold text-lg">{amount} {currency}</span> to
                                         </p>
-                                        <p className="text-xs text-slate-400 font-mono bg-slate-50 py-2 px-4 rounded-full inline-block">
+                                        <p className="text-sm text-slate-400 font-mono bg-slate-50 py-2 px-4 rounded-full inline-block">
                                             {recipientAddress.slice(0, 10)}...{recipientAddress.slice(-8)}
                                         </p>
                                     </div>

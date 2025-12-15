@@ -8,6 +8,7 @@ export interface WalletState {
     isUnlocked: boolean;
     address: string | null;
     accountName: string | null;
+    profilePicture: string | null;
     walletManager: WalletManager | null;
 }
 
@@ -17,6 +18,7 @@ export function useWallet() {
         isUnlocked: false,
         address: null,
         accountName: null,
+        profilePicture: null,
         walletManager: null,
     });
 
@@ -33,6 +35,7 @@ export function useWallet() {
                         isUnlocked: false, // Always start locked for security
                         address: walletData.address,
                         accountName: walletData.accountName || 'My Wallet',
+                        profilePicture: walletData.profilePicture || null,
                         walletManager: null,
                     });
                 }
@@ -67,6 +70,7 @@ export function useWallet() {
                 isUnlocked: true,
                 address: wallet.address,
                 accountName,
+                profilePicture: null,
                 walletManager,
             });
         },
@@ -97,6 +101,7 @@ export function useWallet() {
                     isUnlocked: true,
                     address: wallet.address,
                     accountName: storedWallet.accountName || 'My Wallet',
+                    profilePicture: storedWallet.profilePicture || null,
                     walletManager,
                 });
             } else {
@@ -117,6 +122,7 @@ export function useWallet() {
                     isUnlocked: true,
                     address: wallet.address,
                     accountName,
+                    profilePicture: null,
                     walletManager,
                 });
             }
@@ -142,11 +148,26 @@ export function useWallet() {
         return state.walletManager.getWallet();
     }, [state]);
 
+    const updateProfile = useCallback(async (name?: string, picture?: string | null) => {
+        try {
+            await storage.updateWalletProfile(name, picture === null ? null : picture || undefined);
+            setState(prev => ({
+                ...prev,
+                ...(name !== undefined && { accountName: name }),
+                ...(picture !== undefined && { profilePicture: picture }),
+            }));
+        } catch (error) {
+            console.error('Failed to update profile:', error);
+            throw error;
+        }
+    }, []);
+
     return {
         ...state,
         createWallet,
         loginWithKey,
         logout,
         getWallet,
+        updateProfile,
     };
 }

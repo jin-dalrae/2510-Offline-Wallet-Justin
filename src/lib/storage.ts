@@ -9,6 +9,7 @@ interface WalletDB extends DBSchema {
             address: string;
             encryptedPrivateKey: string;
             accountName?: string;
+            profilePicture?: string;
         };
     };
     offlineBalances: {
@@ -54,6 +55,7 @@ export interface VoucherData {
     to: string;
     timestamp: number;
     signature: string;
+    token?: string;
 }
 
 class StorageManager {
@@ -113,7 +115,8 @@ class StorageManager {
     async saveWallet(
         address: string,
         encryptedPrivateKey: string,
-        accountName?: string
+        accountName?: string,
+        profilePicture?: string
     ): Promise<void> {
         if (!this.db) throw new Error('Database not initialized');
 
@@ -122,6 +125,35 @@ class StorageManager {
             address,
             encryptedPrivateKey,
             accountName,
+            profilePicture,
+        });
+    }
+
+    async updateWalletProfile(
+        accountName?: string,
+        profilePicture?: string | null
+    ): Promise<void> {
+        if (!this.db) throw new Error('Database not initialized');
+
+        // Get active wallet ID logic
+        const activeId = await this.getActiveWalletId();
+        const walletId = activeId || 'main'; // Fallback for legacy
+
+        const wallet = await this.db.get('wallet', walletId);
+        if (!wallet) throw new Error('No wallet found');
+
+        const updates: any = {};
+        if (accountName !== undefined) updates.accountName = accountName;
+        if (profilePicture !== undefined) updates.profilePicture = profilePicture;
+        // If profilePicture is explicitly null, we might want to clear it.
+        // My previous code in SettingsModal passes null for remove.
+        // So checking !== undefined is correct to distinguish "no change" vs "change to null".
+        if (profilePicture === null) updates.profilePicture = null;
+
+
+        await this.db.put('wallet', {
+            ...wallet,
+            ...updates
         });
     }
 
@@ -129,6 +161,7 @@ class StorageManager {
         address: string;
         encryptedPrivateKey: string;
         accountName?: string;
+        profilePicture?: string;
     } | null> {
         if (!this.db) throw new Error('Database not initialized');
 
@@ -139,6 +172,7 @@ class StorageManager {
             address: wallet.address,
             encryptedPrivateKey: wallet.encryptedPrivateKey,
             accountName: wallet.accountName,
+            profilePicture: wallet.profilePicture,
         };
     }
 

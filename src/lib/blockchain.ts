@@ -182,23 +182,27 @@ export class BlockchainService {
     }
 
     /**
-     * Get recent USDC transactions for an address
+     * Get recent ERC20 transactions for an address and token
      */
-    async getRecentTransactions(
-        address: string,
+    async getRecentERC20Transactions(
+        tokenAddress: string,
+        walletAddress: string,
         limit: number = 10
     ): Promise<any[]> {
         try {
+            const contract = this.getERC20Contract(tokenAddress);
+            const decimals = await contract.decimals();
+
             // Get transfer events where address is sender or receiver
             const currentBlock = await this.provider.getBlockNumber();
             const fromBlock = Math.max(0, currentBlock - 10000); // Last ~10k blocks
 
-            const sentFilter = this.usdcContract.filters.Transfer(address, null);
-            const receivedFilter = this.usdcContract.filters.Transfer(null, address);
+            const sentFilter = contract.filters.Transfer(walletAddress, null);
+            const receivedFilter = contract.filters.Transfer(null, walletAddress);
 
             const [sentEvents, receivedEvents] = await Promise.all([
-                this.usdcContract.queryFilter(sentFilter, fromBlock, currentBlock),
-                this.usdcContract.queryFilter(receivedFilter, fromBlock, currentBlock),
+                contract.queryFilter(sentFilter, fromBlock, currentBlock),
+                contract.queryFilter(receivedFilter, fromBlock, currentBlock),
             ]);
 
             const allEvents = [...sentEvents, ...receivedEvents]
@@ -210,12 +214,10 @@ export class BlockchainService {
                 })
                 .slice(0, limit);
 
-            const decimals = await this.usdcContract.decimals();
-
             return await Promise.all(
                 allEvents.map(async (event) => {
                     const block = await this.provider.getBlock(event.blockNumber);
-                    const isSent = (event as any).args?.[0].toLowerCase() === address.toLowerCase();
+                    const isSent = (event as any).args?.[0].toLowerCase() === walletAddress.toLowerCase();
 
                     return {
                         hash: event.transactionHash,
@@ -225,13 +227,25 @@ export class BlockchainService {
                         timestamp: block?.timestamp || 0,
                         blockNumber: event.blockNumber,
                         type: isSent ? 'sent' : 'received',
+                        tokenAddress: tokenAddress,
                     };
                 })
             );
         } catch (error) {
-            console.error('Error fetching transactions:', error);
+            console.error(`Error fetching transactions for ${tokenAddress}:`, error);
             return [];
         }
+    }
+
+    /**
+     * Get recent USDC transactions for an address
+     * @deprecated Use getRecentERC20Transactions instead
+     */
+    async getRecentTransactions(
+        address: string,
+        limit: number = 10
+    ): Promise<any[]> {
+        return this.getRecentERC20Transactions(USDC_CONTRACT_ADDRESS, address, limit);
     }
 
     /**
@@ -266,3 +280,4 @@ export class BlockchainService {
 
 // Singleton instance
 export const blockchain = new BlockchainService();
+

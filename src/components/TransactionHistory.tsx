@@ -1,6 +1,4 @@
-import { useEffect, useState } from 'react';
-import { storage } from '../lib/storage';
-import { blockchain } from '../lib/blockchain';
+import { useTransactions } from '../hooks/useTransactions';
 
 interface TransactionHistoryProps {
     address: string;
@@ -8,88 +6,12 @@ interface TransactionHistoryProps {
     onClose: () => void;
 }
 
-interface DisplayTransaction {
-    id: string;
-    type: 'sent' | 'received';
-    from: string;
-    to: string;
-    amount: string;
-    timestamp: number;
-    status: 'pending' | 'settled' | 'failed';
-    txHash?: string;
-    source: 'local' | 'chain';
-}
-
 export function TransactionHistory({
     address,
     isOnline,
     onClose,
 }: TransactionHistoryProps) {
-    const [transactions, setTransactions] = useState<DisplayTransaction[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-
-    useEffect(() => {
-        loadTransactions();
-    }, [address, isOnline]);
-
-    const loadTransactions = async () => {
-        setIsLoading(true);
-
-        try {
-            // Get local pending transactions
-            const pendingTxs = await storage.getPendingTransactions();
-            const localTxs: DisplayTransaction[] = pendingTxs.map((tx) => ({
-                id: tx.id,
-                type: tx.type,
-                from: tx.from,
-                to: tx.to,
-                amount: tx.amount,
-                timestamp: tx.timestamp,
-                status: tx.status,
-                txHash: tx.txHash,
-                source: 'local',
-            }));
-
-            let chainTxs: DisplayTransaction[] = [];
-
-            // Get on-chain transactions if online
-            if (isOnline) {
-                try {
-                    const recentTxs = await blockchain.getRecentTransactions(address, 20);
-                    chainTxs = recentTxs.map((tx) => ({
-                        id: tx.hash,
-                        type: tx.type as 'sent' | 'received',
-                        from: tx.from,
-                        to: tx.to,
-                        amount: tx.amount,
-                        timestamp: tx.timestamp * 1000,
-                        status: 'settled' as const,
-                        txHash: tx.hash,
-                        source: 'chain',
-                    }));
-                } catch (error) {
-                    console.error('Error loading chain transactions:', error);
-                }
-            }
-
-            // Combine and deduplicate
-            const allTxs = [...localTxs, ...chainTxs];
-            const uniqueTxs = Array.from(
-                new Map(
-                    allTxs.map((tx) => [tx.txHash || tx.id, tx])
-                ).values()
-            );
-
-            // Sort by timestamp
-            uniqueTxs.sort((a, b) => b.timestamp - a.timestamp);
-
-            setTransactions(uniqueTxs);
-        } catch (error) {
-            console.error('Error loading transactions:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    const { transactions, isLoading } = useTransactions(address, isOnline);
 
     const formatDate = (timestamp: number) => {
         const date = new Date(timestamp);
@@ -99,7 +21,6 @@ export function TransactionHistory({
     const formatAddress = (addr: string) => {
         return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
     };
-
 
     const getStatusText = (status: string) => {
         switch (status) {
@@ -115,8 +36,14 @@ export function TransactionHistory({
     };
 
     return (
-        <div className="fixed inset-0 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] z-50 flex items-center justify-center p-4 font-sans text-slate-900">
-            <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-slide-up">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 font-sans text-slate-900 animate-fade-in">
+            {/* Transparent backdrop */}
+            <div
+                className="absolute inset-0"
+                onClick={onClose}
+            />
+
+            <div className="relative bg-white/90 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-slide-up border border-white/50">
                 {/* Header */}
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-2xl font-serif font-bold">Transaction History</h3>
@@ -176,7 +103,7 @@ export function TransactionHistory({
                                                 </span>
                                             </p>
 
-                                            <p className="text-xs text-slate-400 mt-1 font-medium">
+                                            <p className="text-sm text-slate-500 mt-1 font-medium">
                                                 {formatDate(tx.timestamp)}
                                             </p>
 
@@ -185,11 +112,11 @@ export function TransactionHistory({
                                                     href={`https://sepolia.basescan.org/tx/${tx.txHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-xs text-slate-400 hover:text-slate-900 hover:underline mt-2 inline-flex items-center gap-1 transition-colors"
+                                                    className="text-sm text-slate-500 hover:text-slate-900 hover:underline mt-2 inline-flex items-center gap-1 transition-colors"
                                                     onClick={(e) => e.stopPropagation()}
                                                 >
                                                     View on Explorer
-                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                                     </svg>
                                                 </a>
@@ -206,7 +133,7 @@ export function TransactionHistory({
                                                 {tx.type === 'received' ? '+' : '-'}
                                                 {tx.amount}
                                             </p>
-                                            <p className="text-xs text-slate-400 font-bold">USDC</p>
+                                            <p className="text-sm text-slate-500 font-bold">{tx.tokenSymbol}</p>
                                         </div>
                                     </div>
                                 </div>

@@ -47,7 +47,7 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                     <div className="flex items-center gap-4">
                         <button
                             onClick={onSignIn}
-                            className="text-sm font-bold hover:text-slate-900 transition-colors hidden sm:block text-slate-700"
+                            className="text-sm font-bold hover:text-slate-900 transition-colors text-slate-700"
                         >
                             Sign In
                         </button>

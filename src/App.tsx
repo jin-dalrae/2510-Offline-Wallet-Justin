@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 import { useWallet } from './hooks/useWallet';
@@ -14,17 +14,19 @@ import { ReceiveOffline } from './components/ReceiveOffline';
 import { TransactionHistory } from './components/TransactionHistory';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { ProtectedAdminRoute } from './components/admin/ProtectedAdminRoute';
+import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminOverview } from './components/admin/AdminOverview';
 import { UserManagement } from './components/admin/UserManagement';
+import { SettingsModal } from './components/SettingsModal';
 import { firebase } from './lib/firebase';
 import { storage } from './lib/storage';
-import { v4 as uuidv4 } from 'uuid';
 
 function App() {
     const navigate = useNavigate();
     const wallet = useWallet();
     const isOnline = useOnlineStatus();
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const { balance, refreshBalance } = useBalance(
         wallet.address,
         isOnline
@@ -108,34 +110,6 @@ function App() {
         }
     };
 
-    const handleLoadMoney = async () => {
-        window.open('https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet', '_blank');
-        toast('Opening Coinbase Faucet...', {
-            icon: '🪙',
-        });
-
-        // Record "Load" as a pending transaction so it shows in history
-        if (wallet.address) {
-            try {
-                const txId = uuidv4();
-                const deviceId = storage.getDeviceId();
-
-                await storage.addPendingTransaction({
-                    id: txId,
-                    type: 'received',
-                    from: 'Coinbase Faucet',
-                    to: wallet.address,
-                    amount: 'Pending', // Unknown amount until it arrives
-                    timestamp: Date.now(),
-                    status: 'pending',
-                    deviceId,
-                });
-            } catch (error) {
-                console.error('Failed to record load transaction:', error);
-            }
-        }
-    };
-
     const handleSendSuccess = () => {
         refreshBalance();
         toast.success('Offline payment sent!');
@@ -146,14 +120,9 @@ function App() {
         toast.success('Offline payment received!');
     };
 
-    const handleUnifiedSend = () => {
-        if (isOnline) {
-            // In a real app, this would check if receiver is online
-            // For now, we'll default to the offline voucher flow as it works for both
-            // but we could add a "Send to Address" modal here for online-only
-            navigate('/send');
-        } else {
-            navigate('/send');
+    const handleUpdateProfile = async (name: string, picture: string | null) => {
+        if (wallet.updateProfile) {
+            await wallet.updateProfile(name, picture || undefined);
         }
     };
 
@@ -214,15 +183,12 @@ function App() {
                         wallet.isUnlocked ? (
                             <NewDashboard
                                 accountName={wallet.accountName || 'My Wallet'}
+                                profilePicture={wallet.profilePicture || null}
                                 address={wallet.address!}
+                                wallet={wallet.getWallet()}
                                 balance={balance}
                                 isOnline={isOnline}
-                                onSendMoney={handleUnifiedSend}
-                                onLoadMoney={handleLoadMoney}
-                                onViewHistory={() => navigate('/history')}
-                                onSettings={() => toast('Settings coming soon')}
-                                onSendOffline={() => navigate('/send')}
-                                onReceiveOffline={() => navigate('/receive')}
+                                onSettings={() => setIsSettingsOpen(true)}
                                 onRefresh={refreshBalance}
                                 onLogout={() => {
                                     wallet.logout();
@@ -246,7 +212,8 @@ function App() {
                         wallet.isUnlocked ? (
                             <SendOffline
                                 wallet={wallet.getWallet()}
-                                availableBalance={balance.available}
+                                balance={balance}
+                                isOnline={isOnline}
                                 onClose={() => navigate('/dashboard')}
                                 onSuccess={handleSendSuccess}
                             />
@@ -311,6 +278,10 @@ function App() {
                 />
 
                 {/* Admin Routes */}
+                <Route
+                    path="/admin/login"
+                    element={<AdminLogin />}
+                />
                 <Route
                     path="/admin"
                     element={
@@ -397,6 +368,15 @@ function App() {
                     }
                 />
             </Routes>
+
+            {/* Settings Modal */}
+            <SettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                currentName={wallet.accountName || ''}
+                currentProfilePicture={wallet.profilePicture || null}
+                onSave={handleUpdateProfile}
+            />
 
             {/* Settlement Progress Overlay */}
             {settlement.isSettling && (

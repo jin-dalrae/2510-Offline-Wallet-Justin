@@ -1,8 +1,12 @@
 import { ethers } from 'ethers';
 import { storage, PendingTransaction } from './storage';
-import { blockchain } from './blockchain';
+import {
+    blockchain,
+    USDC_CONTRACT_ADDRESS,
+    CBBTC_CONTRACT_ADDRESS,
+    EURC_CONTRACT_ADDRESS
+} from './blockchain';
 import { firebase } from './firebase';
-import { WalletManager } from './wallet';
 
 export interface SettlementResult {
     success: boolean;
@@ -10,9 +14,6 @@ export interface SettlementResult {
     error?: string;
     retries?: number;
 }
-
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000; // Start with 2 seconds
 
 async function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -24,6 +25,9 @@ export class SettlementService {
     /**
      * Settle all pending received transactions
      * This sweeps funds from temporary wallets to the main wallet
+     */
+    /**
+     * Settle all pending transactions (sent and received)
      */
     async settlePendingTransactions(
         mainWallet: ethers.HDNodeWallet | ethers.Wallet,
@@ -37,43 +41,46 @@ export class SettlementService {
         const results: SettlementResult[] = [];
 
         try {
-            // Get all pending received transactions
-            const pendingTxs = await storage.getPendingTransactions();
-            const receivedTxs = pendingTxs.filter(
-                (tx) =>
-                    tx.type === 'received' &&
-                    tx.status === 'pending' &&
-                    tx.voucherData
-            );
+            // Get all pending transactions
+            const allPending = await storage.getPendingTransactions();
+            const pendingTxs = allPending.filter(tx => tx.status === 'pending');
 
-            if (receivedTxs.length === 0) {
+            if (pendingTxs.length === 0) {
                 this.isSettling = false;
                 return results;
             }
 
-            onProgress?.(0, receivedTxs.length, 'Starting settlement...');
+            onProgress?.(0, pendingTxs.length, 'Starting settlement...');
 
-            for (let i = 0; i < receivedTxs.length; i++) {
-                const tx = receivedTxs[i];
+            for (let i = 0; i < pendingTxs.length; i++) {
+                const tx = pendingTxs[i];
                 onProgress?.(
                     i + 1,
-                    receivedTxs.length,
-                    `Settling transaction ${i + 1}/${receivedTxs.length}`
+                    pendingTxs.length,
+                    `Settling ${tx.type} transaction ${i + 1}/${pendingTxs.length}`
                 );
 
-                const result = await this.settleTransaction(tx, mainWallet);
+                let result: SettlementResult;
+                if (tx.type === 'sent') {
+                    result = await this.settleSentTransaction(tx, mainWallet);
+                } else {
+                    result = await this.settleReceivedTransaction(tx, mainWallet);
+                }
+
                 results.push(result);
 
-                // Small delay between transactions
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                // Small delay to prevent rate limits
+                if (result.success) {
+                    await delay(1000);
+                }
             }
 
             // Update offline balances after settlement
             await this.recalculateOfflineBalances();
 
             onProgress?.(
-                receivedTxs.length,
-                receivedTxs.length,
+                pendingTxs.length,
+                pendingTxs.length,
                 'Settlement complete'
             );
         } catch (error) {
@@ -90,137 +97,129 @@ export class SettlementService {
     }
 
     /**
-     * Settle a single transaction with retry logic
+     * Settle a 'sent' transaction by broadcasting it to the blockchain
      */
-    private async settleTransaction(
+    private async settleSentTransaction(
         tx: PendingTransaction,
-        mainWallet: ethers.HDNodeWallet | ethers.Wallet
+        wallet: ethers.HDNodeWallet | ethers.Wallet
     ): Promise<SettlementResult> {
-        return await this.settleTransactionWithRetry(tx, mainWallet, 0);
+        try {
+            // Determine token address
+            let tokenAddress = '';
+            const symbol = tx.voucherData?.token || 'USDC';
+
+            if (symbol === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
+            else if (symbol === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
+            else tokenAddress = USDC_CONTRACT_ADDRESS;
+
+            // Check if we have gas
+            const hasGas = await blockchain.hasEnoughGas(wallet.address);
+            if (!hasGas) {
+                return { success: false, error: 'Insufficient ETH for gas' };
+            }
+
+            // Broadcast transaction
+            const txResponse = await blockchain.transferERC20(
+                wallet as any,
+                tokenAddress,
+                tx.to,
+                tx.amount
+            );
+
+            // Wait/Confirm? Just broadcast is enough to mark 'settled' locally, 
+            // but waiting ensures valid hash.
+            await txResponse.wait(1);
+
+            // Update storage
+            await storage.updatePendingTransaction(tx.id, {
+                status: 'settled',
+                txHash: txResponse.hash,
+            });
+
+            // Update Firebase
+            await firebase.initialize();
+            await firebase.addPendingTransaction({
+                ...tx,
+                status: 'settled',
+                settledTxHash: txResponse.hash,
+            } as any);
+
+            return { success: true, txHash: txResponse.hash };
+
+        } catch (error) {
+            console.error('Failed to settle sent transaction:', error);
+
+            // If it fails permanently (e.g. insufficient funds), mark failed?
+            // Or keep pending to retry?
+            // For now, if generic error, keep pending.
+            return { success: false, error: (error as Error).message };
+        }
     }
 
     /**
-     * Settle a single transaction with retry logic
+     * Settle a 'received' transaction by verifying it on-chain
      */
-    private async settleTransactionWithRetry(
+    private async settleReceivedTransaction(
         tx: PendingTransaction,
-        mainWallet: ethers.HDNodeWallet | ethers.Wallet,
-        retryCount: number
+        mainWallet: ethers.HDNodeWallet | ethers.Wallet
     ): Promise<SettlementResult> {
         try {
-            if (!tx.voucherData) {
-                return { success: false, error: 'No voucher data' };
+            if (!tx.from || !tx.amount) {
+                return { success: false, error: 'Invalid transaction data' };
             }
 
-            // Import temporary wallet
-            const tempWallet = WalletManager.fromPrivateKey(
-                tx.voucherData.privateKey
+            // Determine token address
+            let tokenAddress = '';
+            const symbol = tx.voucherData?.token || 'USDC';
+            if (symbol === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
+            else if (symbol === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
+            else tokenAddress = USDC_CONTRACT_ADDRESS;
+
+            // Look for matching on-chain transaction
+            // We search for recent transactions to 'me' from 'sender'
+            const recentTxs = await blockchain.getRecentERC20Transactions(
+                tokenAddress,
+                mainWallet.address,
+                20 // Check last 20
             );
 
-            // Check if temp wallet has funds
-            const balance = await blockchain.getUSDCBalance(tempWallet.address);
-            const balanceNum = parseFloat(balance);
+            // Match logic: Same sender, same amount, roughly same time?
+            // Local timestamp might differ from chain timestamp considerably if queued.
+            // So mostly match From and Amount.
+            // Also ensure it's not already linked to another local tx? 
+            // (Deduplication prevents double counting in UI, but here we want to link status)
 
-            if (balanceNum <= 0) {
-                // Mark as failed - no funds (not retryable)
-                await storage.updatePendingTransaction(tx.id, {
-                    status: 'failed',
-                });
-
-                return {
-                    success: false,
-                    error: 'Temporary wallet has no funds',
-                };
-            }
-
-            // Check if temp wallet has enough ETH for gas
-            const hasGas = await blockchain.hasEnoughGas(tempWallet.address);
-            if (!hasGas) {
-                // Insufficient gas - not retryable
-                return {
-                    success: false,
-                    error: 'Temporary wallet has insufficient gas',
-                };
-            }
-
-            // Sweep USDC to main wallet
-            const txResponse = await blockchain.sweepUSDC(
-                tempWallet,
-                mainWallet.address
+            const match = recentTxs.find(chainTx =>
+                chainTx.type === 'received' &&
+                chainTx.from.toLowerCase() === tx.from.toLowerCase() &&
+                // Compare amounts with small tolerance or exact string match?
+                // Both are strings. 
+                Math.abs(parseFloat(chainTx.amount) - parseFloat(tx.amount)) < 0.000001
             );
 
-            if (!txResponse) {
-                // No response - this could be transient, retry if possible
-                if (retryCount < MAX_RETRIES) {
-                    const delayTime = RETRY_DELAY_MS * Math.pow(2, retryCount);
-                    console.log(`Retrying settlement in ${delayTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-                    await delay(delayTime);
-                    return await this.settleTransactionWithRetry(tx, mainWallet, retryCount + 1);
-                }
-                return { success: false, error: 'Failed to sweep funds after retries', retries: retryCount };
-            }
-
-            // Wait for confirmation
-            const receipt = await txResponse.wait();
-
-            if (receipt?.status === 1) {
-                // Update local storage
+            if (match) {
+                // Found it! Mark settled.
                 await storage.updatePendingTransaction(tx.id, {
                     status: 'settled',
-                    txHash: txResponse.hash,
+                    txHash: match.hash,
                 });
 
                 // Update Firebase
                 try {
-                    await firebase.markAsSettled(tx.id, txResponse.hash);
+                    await firebase.initialize();
+                    await firebase.markAsSettled(tx.id, match.hash);
                 } catch (e) {
                     console.warn('Failed to update Firebase:', e);
                 }
 
-                return {
-                    success: true,
-                    txHash: txResponse.hash,
-                    retries: retryCount,
-                };
+                return { success: true, txHash: match.hash };
             } else {
-                await storage.updatePendingTransaction(tx.id, {
-                    status: 'failed',
-                });
-
-                return {
-                    success: false,
-                    error: 'Transaction failed on-chain',
-                };
+                // Not found yet. Keep pending.
+                return { success: false, error: 'Transaction not found on-chain yet' };
             }
+
         } catch (error) {
-            console.error('Error settling transaction:', error);
-
-            // Check if this is a transient error that we should retry
-            const errorMessage = (error as Error).message.toLowerCase();
-            const isTransientError =
-                errorMessage.includes('network') ||
-                errorMessage.includes('timeout') ||
-                errorMessage.includes('connection') ||
-                errorMessage.includes('econnrefused') ||
-                errorMessage.includes('nonce');
-
-            if (isTransientError && retryCount < MAX_RETRIES) {
-                const delayTime = RETRY_DELAY_MS * Math.pow(2, retryCount);
-                console.log(`Transient error detected, retrying in ${delayTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-                await delay(delayTime);
-                return await this.settleTransactionWithRetry(tx, mainWallet, retryCount + 1);
-            }
-
-            // Mark as failed (permanent error or max retries reached)
-            await storage.updatePendingTransaction(tx.id, {
-                status: 'failed',
-            });
-
-            return {
-                success: false,
-                error: (error as Error).message,
-                retries: retryCount,
-            };
+            return { success: false, error: (error as Error).message };
         }
     }
 

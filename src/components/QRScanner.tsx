@@ -8,54 +8,59 @@ interface QRScannerProps {
 
 export function QRScanner({ onScan, onClose }: QRScannerProps) {
     const [error, setError] = useState('');
-    const [isScanning, setIsScanning] = useState(false);
     const scannerRef = useRef<Html5Qrcode | null>(null);
     const qrRegionId = 'qr-reader';
 
     useEffect(() => {
+        // Use a flag to prevent race conditions in Strict Mode
+        let isMounted = true;
         const html5QrCode = new Html5Qrcode(qrRegionId);
         scannerRef.current = html5QrCode;
 
-        const config = {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
+        const startScanner = async () => {
+            try {
+                await html5QrCode.start(
+                    { facingMode: 'environment' },
+                    {
+                        fps: 10,
+                        qrbox: { width: 250, height: 250 },
+                    },
+                    (decodedText) => {
+                        if (isMounted) {
+                            onScan(decodedText);
+                            // We don't auto-close here, let parent decide
+                        }
+                    },
+                    () => {
+                        // Scan error, ignore
+                    }
+                );
+            } catch (err) {
+                if (isMounted) {
+                    console.error('Camera start error:', err);
+                    setError('Camera access failed. Please ensure permission is granted.');
+                }
+            }
         };
 
-        html5QrCode
-            .start(
-                { facingMode: 'environment' },
-                config,
-                (decodedText) => {
-                    // Success callback
-                    onScan(decodedText);
-                    handleClose();
-                },
-                () => {
-                    // Error callback - ignore, this is called frequently
-                }
-            )
-            .then(() => {
-                setIsScanning(true);
-            })
-            .catch((err) => {
-                setError('Failed to start camera: ' + err);
-            });
+        startScanner();
 
         return () => {
-            handleClose();
+            isMounted = false;
+            if (html5QrCode.isScanning) {
+                html5QrCode.stop().then(() => html5QrCode.clear()).catch(console.error);
+            }
         };
-    }, []);
+    }, [onScan]);
 
-    const handleClose = () => {
-        if (scannerRef.current && isScanning) {
-            scannerRef.current
-                .stop()
-                .then(() => {
-                    scannerRef.current?.clear();
-                })
-                .catch((err) => {
-                    console.error('Error stopping scanner:', err);
-                });
+    const handleClose = async () => {
+        try {
+            if (scannerRef.current?.isScanning) {
+                await scannerRef.current.stop();
+                scannerRef.current.clear();
+            }
+        } catch (err) {
+            console.error('Error stopping scanner:', err);
         }
         onClose();
     };
@@ -64,7 +69,7 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="card max-w-md w-full space-y-4 animate-slide-up">
                 <div className="flex justify-between items-center">
-                    <h3 className="text-xl font-bold">Scan QR Code</h3>
+                    <h3 className="text-xl font-bold text-white">Scan QR Code</h3>
                     <button
                         onClick={handleClose}
                         className="text-gray-400 hover:text-white text-2xl"
@@ -75,7 +80,7 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
 
                 <div
                     id={qrRegionId}
-                    className="qr-scanner-overlay rounded-xl overflow-hidden"
+                    className="qr-scanner-overlay rounded-xl overflow-hidden min-h-[300px] bg-slate-900"
                 />
 
                 {error && (

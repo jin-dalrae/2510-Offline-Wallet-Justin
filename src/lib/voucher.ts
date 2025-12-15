@@ -5,6 +5,7 @@ export interface CreateVoucherParams {
     fromWallet: ethers.HDNodeWallet | ethers.Wallet;
     toAddress: string;
     amount: string;
+    token?: string;
 }
 
 export interface VoucherQRData {
@@ -15,6 +16,7 @@ export interface VoucherQRData {
     to: string;
     timestamp: number;
     signature: string;
+    token?: string;
 }
 
 export class VoucherService {
@@ -26,7 +28,7 @@ export class VoucherService {
         voucherData: VoucherQRData;
         temporaryWallet: ethers.HDNodeWallet;
     }> {
-        const { fromWallet, toAddress, amount } = params;
+        const { fromWallet, toAddress, amount, token } = params;
 
         // Generate temporary wallet for the voucher
         const { wallet: tempWallet } = WalletManager.createWallet();
@@ -40,6 +42,7 @@ export class VoucherService {
             from: fromWallet.address,
             to: toAddress,
             timestamp,
+            token: token || 'USDC', // Default to USDC if not specified
         };
 
         // Sign the voucher with the sender's wallet to prove authenticity
@@ -48,6 +51,7 @@ export class VoucherService {
             to: voucherData.to,
             amount: voucherData.amount,
             timestamp: voucherData.timestamp,
+            token: voucherData.token,
             tempAddress: tempWallet.address,
         });
 
@@ -123,6 +127,7 @@ export class VoucherService {
                 to: voucherData.to,
                 amount: voucherData.amount,
                 timestamp: voucherData.timestamp,
+                token: voucherData.token || 'USDC', // For backward compatibility? Or assume new format
                 tempAddress: tempWallet.address,
             });
 

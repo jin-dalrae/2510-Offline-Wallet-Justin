@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
@@ -21,13 +21,23 @@ export function ReceiveOffline({
         'show-address'
     );
     const [voucherAmount, setVoucherAmount] = useState('');
+    const [voucherToken, setVoucherToken] = useState('USDC');
     const [senderAddress, setSenderAddress] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
 
     const addressQR = VoucherService.encodeAddress(address);
 
+    const processingRef = useRef(false);
+    const lastScannedRef = useRef<string>('');
+
     const handleVoucherScanned = async (qrData: string) => {
+        if (processingRef.current) return;
+        // Prevent repeated alerts for the same invalid QR code
+        if (qrData === lastScannedRef.current) return;
+
+        processingRef.current = true;
         setIsProcessing(true);
+        lastScannedRef.current = qrData;
 
         try {
             // Decode voucher
@@ -71,14 +81,25 @@ export function ReceiveOffline({
             );
 
             setVoucherAmount(voucherData.amount);
+            setVoucherToken(voucherData.token || 'USDC');
             setSenderAddress(voucherData.from);
             setStep('complete');
             toast.success('Voucher received!');
+            toast.success('Voucher received!');
         } catch (err) {
+            // Only show toast if it's a new error or sufficient time passed?
+            // For now, just show it. The dedupe above handles rapid fire of SAME code.
             toast.error('Failed to process voucher: ' + (err as Error).message);
+            // If it failed, we MIGHT want to allow scanning again immediately if it was a read error,
+            // but if it's an invalid voucher, user needs to scan a different one.
+            // Resetting processingRef happens in finally.
+            // If we want to allow re-scanning the SAME code (e.g. if it was a glitch), we should clear lastScanned.
+            // But usually "limitless alerts" means it keeps reading the same frame.
+            // So keeping lastScannedRef.current set to this bad code is correct to stop the loop.
             setStep('show-address');
         } finally {
             setIsProcessing(false);
+            processingRef.current = false;
         }
     };
 
@@ -88,8 +109,9 @@ export function ReceiveOffline({
     };
 
     return (
-        <div className="fixed inset-0 bg-gradient-to-b from-[#eaff7b] to-[#4bf2e6] z-50 flex items-center justify-center p-4 font-sans text-slate-900">
-            <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl w-full max-w-md space-y-6 animate-slide-up">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 font-sans text-slate-900">
+            <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]" onClick={onClose} />
+            <div className="relative bg-white rounded-[2.5rem] p-8 shadow-2xl w-full max-w-md space-y-6 animate-slide-up">
                 {/* Header */}
                 <div className="flex justify-between items-center">
                     <h3 className="text-2xl font-serif font-bold">Receive Offline</h3>
@@ -138,7 +160,10 @@ export function ReceiveOffline({
                         <div className="bg-slate-900 rounded-3xl overflow-hidden shadow-xl">
                             <QRScanner
                                 onScan={handleVoucherScanned}
-                                onClose={() => setStep('show-address')}
+                                onClose={() => {
+                                    lastScannedRef.current = '';
+                                    setStep('show-address');
+                                }}
                             />
                         </div>
                         <p className="text-center text-slate-500 text-sm">Scan the sender's voucher QR</p>
@@ -171,13 +196,13 @@ export function ReceiveOffline({
 
                             <div className="my-6">
                                 <p className="text-4xl font-bold font-mono text-slate-900">
-                                    +{voucherAmount} <span className="text-2xl text-slate-500">USDC</span>
+                                    +{voucherAmount} <span className="text-2xl text-slate-500">{voucherToken}</span>
                                 </p>
                             </div>
 
                             <div className="bg-slate-50 rounded-2xl p-4 inline-block">
                                 <p className="text-sm text-slate-500 mb-1">From</p>
-                                <p className="text-xs text-slate-900 font-mono font-bold">
+                                <p className="text-sm text-slate-900 font-mono font-bold">
                                     {senderAddress.slice(0, 10)}...{senderAddress.slice(-8)}
                                 </p>
                             </div>
@@ -204,6 +229,6 @@ export function ReceiveOffline({
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
