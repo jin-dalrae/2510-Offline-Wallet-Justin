@@ -10,6 +10,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@x402/evm": "^2.2.0",
+    "@x402/fetch": "^2.2.0",
     "ethers": "^6.9.0",
     "firebase": "^10.14.1",
     "html5-qrcode": "^2.3.8",
@@ -20,7 +22,9 @@
     "react-hot-toast": "^2.4.1",
     "react-router-dom": "^6.20.0",
     "recharts": "^3.5.1",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "viem": "^2.44.2",
+    "x402": "^1.1.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

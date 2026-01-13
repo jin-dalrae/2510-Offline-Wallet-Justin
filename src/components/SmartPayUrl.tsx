@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { agentService, AgentSession, AgentMessage } from '../lib/agentService';
-import { X402Service, X402PaymentRequest } from '../lib/x402';
+import { X402PaymentRequest } from '../lib/x402';
 import { blockchain, USDC_CONTRACT_ADDRESS, EURC_CONTRACT_ADDRESS, CBBTC_CONTRACT_ADDRESS } from '../lib/blockchain';
 import toast from 'react-hot-toast';
 import { BalanceState } from '../hooks/useBalance';
@@ -73,8 +73,10 @@ export function SmartPayUrl({ wallet, balance, onClose, onPaymentComplete }: Sma
                     toast.error(result.error);
                 }
             } else {
-                // Direct x402 check (fallback)
-                const result = await X402Service.checkUrl(targetUrl);
+                // Direct x402 check using official SDK
+                const { createX402Service } = await import('../lib/x402');
+                const x402 = createX402Service(wallet);
+                const result = await x402.checkUrl(targetUrl);
 
                 if (result.requiresPayment && result.details) {
                     setPaymentRequest(result.details);
@@ -90,6 +92,7 @@ export function SmartPayUrl({ wallet, balance, onClose, onPaymentComplete }: Sma
             setIsLoading(false);
         }
     };
+
 
     const handleNegotiate = async () => {
         if (!session) return;

@@ -64,41 +64,73 @@ class AgentState(TypedDict):
 # ============== Tools ==============
 
 async def check_x402_url(url: str) -> Dict[str, Any]:
-    """Check if a URL requires x402 payment"""
+    """Check if a URL requires x402 payment
+    
+    Supports both x402 v1 (headers) and v2 (JSON body) formats
+    """
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, follow_redirects=True)
             
             if response.status_code == 402:
-                # Parse payment details from headers
-                www_auth = response.headers.get('WWW-Authenticate', '')
-                accept_payment = response.headers.get('Accept-Payment', '')
-                payment_amount = response.headers.get('Payment-Amount', '')
-                
-                # Parse headers
+                # Initialize payment details
                 amount = ''
                 token = 'USDC'
                 receiver = ''
                 realm = 'Access to resource'
+                network = 'base-sepolia'
+                
+                # Try x402 v2 JSON body first
+                content_type = response.headers.get('content-type', '')
+                if 'application/json' in content_type:
+                    try:
+                        data = response.json()
+                        
+                        # x402 v2 format with accepts array
+                        if 'accepts' in data and isinstance(data['accepts'], list) and len(data['accepts']) > 0:
+                            accept = data['accepts'][0]
+                            amount = str(accept.get('maxAmountRequired', accept.get('amount', '')))
+                            if 'asset' in accept and isinstance(accept['asset'], dict):
+                                token = accept['asset'].get('symbol', 'USDC')
+                            receiver = accept.get('payee', accept.get('to', accept.get('receiver', '')))
+                            network = accept.get('network', 'base-sepolia')
+                            if 'description' in data:
+                                realm = data['description']
+                        
+                        # Direct properties (simpler format)
+                        if not amount:
+                            amount = str(data.get('amount', ''))
+                        if not receiver:
+                            receiver = data.get('receiver', data.get('payee', data.get('to', data.get('address', ''))))
+                        if data.get('token'):
+                            token = data['token']
+                            
+                    except Exception:
+                        pass
+                
+                # Fallback to headers (v1 style)
+                www_auth = response.headers.get('WWW-Authenticate', '')
+                accept_payment = response.headers.get('Accept-Payment', '')
+                payment_amount = response.headers.get('Payment-Amount', '')
                 
                 # Parse WWW-Authenticate header
-                if www_auth.lower().startswith('x402'):
+                if www_auth.lower().startswith('x402') and (not amount or not receiver):
                     parts = www_auth[5:].split(',')
                     for part in parts:
                         if '=' in part:
                             key, val = part.strip().split('=', 1)
                             val = val.strip('"\'')
-                            if key == 'amount':
+                            if key == 'amount' and not amount:
                                 amount = val
                             elif key == 'token':
                                 token = val
-                            elif key == 'receiver':
+                            elif key == 'receiver' and not receiver:
                                 receiver = val
                             elif key == 'realm':
                                 realm = val
                 
                 # Fallback to other headers
-                if payment_amount:
+                if payment_amount and not amount:
                     for p in payment_amount.split():
                         if '=' in p:
                             k, v = p.split('=')
@@ -107,21 +139,11 @@ async def check_x402_url(url: str) -> Dict[str, Any]:
                             elif k == 'currency':
                                 token = v
                 
-                if accept_payment:
+                if accept_payment and not receiver:
                     import re
                     match = re.search(r'address=([^;,\s]+)', accept_payment)
                     if match:
                         receiver = match.group(1)
-                
-                # Try JSON body as fallback
-                if not amount or not receiver:
-                    try:
-                        data = response.json()
-                        amount = amount or data.get('amount', '')
-                        receiver = receiver or data.get('receiver', data.get('address', ''))
-                        token = token or data.get('token', 'USDC')
-                    except:
-                        pass
                 
                 if amount and receiver:
                     return {
@@ -131,7 +153,8 @@ async def check_x402_url(url: str) -> Dict[str, Any]:
                             'amount': amount,
                             'token': token,
                             'receiver': receiver,
-                            'realm': realm
+                            'realm': realm,
+                            'network': network
                         }
                     }
                 else:
@@ -157,6 +180,7 @@ async def check_x402_url(url: str) -> Dict[str, Any]:
                 'requires_payment': False,
                 'error': str(e)
             }
+
 
 
 # ============== Graph Nodes ==============
