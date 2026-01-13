@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ethers } from 'ethers';
-import { X402Service, X402PaymentRequest } from '../lib/x402';
+import { createX402Service, X402PaymentRequest } from '../lib/x402';
 import toast from 'react-hot-toast';
 import { BalanceState } from '../hooks/useBalance';
 
@@ -30,7 +30,8 @@ export function PayUrl({ wallet, balance, onClose }: PayUrlProps) {
                 targetUrl = 'https://' + url;
             }
 
-            const result = await X402Service.checkUrl(targetUrl);
+            const x402 = createX402Service(wallet);
+            const result = await x402.checkUrl(targetUrl);
 
             if (result.requiresPayment && result.details) {
                 setPaymentRequest(result.details);
@@ -64,7 +65,8 @@ export function PayUrl({ wallet, balance, onClose }: PayUrlProps) {
                 throw new Error(`Insufficient ${paymentRequest.token} balance`);
             }
 
-            const result = await X402Service.payAndFetch(paymentRequest, wallet);
+            const x402 = createX402Service(wallet);
+            const result = await x402.payAndFetch(paymentRequest.url);
             setContent(result);
             setPaymentRequest(null);
             toast.success('Payment successful! Content unlocked.');

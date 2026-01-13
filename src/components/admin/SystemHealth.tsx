@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { blockchain, BASE_SEPOLIA_CONFIG } from '../../lib/blockchain';
 import { firebase } from '../../lib/firebase';
-import toast from 'react-hot-toast';
 
 interface HealthStatus {
     rpc: 'online' | 'degraded' | 'offline';
@@ -189,10 +188,10 @@ export function SystemHealth() {
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
                 <div className="flex items-center gap-4 mb-6">
                     <div className={`w-4 h-4 rounded-full ${health?.rpc === 'online' && health?.firebase === 'online'
-                            ? 'bg-emerald-500'
-                            : health?.rpc === 'offline' || health?.firebase === 'offline'
-                                ? 'bg-red-500'
-                                : 'bg-amber-500'
+                        ? 'bg-emerald-500'
+                        : health?.rpc === 'offline' || health?.firebase === 'offline'
+                            ? 'bg-red-500'
+                            : 'bg-amber-500'
                         } animate-pulse`} />
                     <h2 className="text-xl font-bold text-slate-900">
                         System is {

@@ -1,243 +1,97 @@
-# Offline Stablecoin Wallet
+# Offline Stablecoin Wallet + AI Payment Agent (x402)
 
-A mobile-first web application that enables offline stablecoin transactions using QR-based vouchers with settlement on Base Sepolia testnet.
-
-## Features
-
-- 🔐 **Secure Wallet Management**: Password-encrypted wallets stored locally
-- 📱 **QR-Based Offline Transactions**: Send and receive USDC without internet
-- 🎯 **Receiver-Specific Vouchers**: Vouchers can only be claimed by intended recipient
-- 🔄 **Auto-Settlement**: Automatically settles pending transactions when online
-- 💾 **Device-Specific Balances**: Offline balances tracked per device
-- 🔥 **Firebase Sync**: Pending transactions synced across devices when online
-- ⚡ **Base Sepolia**: Built on Coinbase's Base Sepolia testnet
-
-## How It Works
-
-### Offline Transaction Flow
-
-1. **Sender**:
-   - Opens "Send Offline"
-   - Enters amount
-   - Scans receiver's address QR code
-   - Shows voucher QR code to receiver
-   - Funds deducted from available balance
-
-2. **Receiver**:
-   - Opens "Receive Offline"
-   - Shows address QR code to sender
-   - Scans voucher QR code
-   - Funds added to pending received balance
-
-3. **Settlement** (when either device goes online):
-   - App automatically detects online connection
-   - Sweeps funds from temporary voucher wallets
-   - Updates balances on-chain
-   - Syncs status via Firebase
-
-## Tech Stack
-
-- **Frontend**: React + TypeScript + Vite
-- **Blockchain**: ethers.js v6, Base Sepolia USDC
-- **QR Codes**: qrcode.react, html5-qrcode
-- **Storage**: IndexedDB (local), Firebase Firestore (sync)
-- **Styling**: Tailwind CSS with custom glassmorphism design
-
-## Setup
-
-### Prerequisites
-
-- Node.js 18+ and npm
-- Firebase project (optional, for transaction sync)
-- Base Sepolia testnet ETH and USDC
-
-### Installation
-
-1. **Clone and install dependencies**:
-   ```bash
-   npm install
-   ```
-
-2. **Configure environment variables**:
-   ```bash
-   cp .env.example .env
-   ```
-
-   Edit `.env` with your Firebase configuration (optional for offline-only mode)
-
-3. **Run development server**:
-   ```bash
-   npm run dev
-   ```
-
-4. **Build for production**:
-   ```bash
-   npm run build
-   ```
-
-### Firebase Setup (Optional)
-
-If you want transaction syncing:
-
-1. Create a Firebase project at https://console.firebase.google.com
-2. Enable Firestore Database
-3. Enable Anonymous Authentication
-4. Deploy Firestore rules:
-   ```bash
-   firebase deploy --only firestore:rules
-   ```
-5. Add your Firebase config to `.env`
-
-### Getting Test Funds
-
-1. **Base Sepolia ETH** (for gas):
-   - Visit https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet
-   - Or use https://sepoliafaucet.com/
-
-2. **Base Sepolia USDC**:
-   - Contract: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-   - Use Circle's USDC faucet or bridge from Sepolia
-
-## Usage
-
-### Create Wallet
-
-1. Click "Create New Wallet"
-2. Choose a strong password (min 8 characters)
-3. **Important**: Write down your 12-word recovery phrase
-4. Store it safely - this is the only way to recover your wallet
-
-### Send Money Offline
-
-1. Click "Send Offline"
-2. Enter amount in USDC
-3. Scan receiver's address QR code
-4. Show the generated voucher QR to receiver
-
-### Receive Money Offline
-
-1. Click "Receive Offline"
-2. Show your address QR to sender
-3. After sender creates voucher, scan it
-4. Funds added to pending balance
-
-### Settlement
-
-- Happens automatically when you go online
-- Receiver's device sweeps temporary wallet funds
-- Both sender and receiver see updated balances
-- Check transaction history for settlement status
-
-## Security
-
-- ✅ Private keys encrypted with password
-- ✅ Vouchers are receiver-specific (validated by address)
-- ✅ Cryptographic signatures prevent voucher tampering
-- ✅ Offline balances tracked per device (prevents double-spending)
-- ✅ 7-day voucher expiration
-- ❌ Not audited - use for testing only
-
-## Architecture
-
-```
-┌─────────────────┐         ┌─────────────────┐
-│   Device A      │         │   Device B      │
-│   (Sender)      │         │   (Receiver)    │
-│                 │         │                 │
-│  1. Scan addr   │────────▶│  1. Show addr   │
-│  2. Create      │         │  2. Scan        │
-│     voucher     │◀────────│     voucher     │
-│  3. Show QR     │         │  3. Validate    │
-│                 │         │                 │
-│  Offline: -10   │         │  Offline: +10   │
-└────────┬────────┘         └────────┬────────┘
-         │                           │
-         │  When online              │
-         │                           │
-         ▼                           ▼
-┌─────────────────────────────────────────────┐
-│          Base Sepolia Blockchain            │
-│                                             │
-│  Temp Wallet ──────▶ Receiver's Wallet     │
-│    (settlement)                             │
-└─────────────────────────────────────────────┘
-```
-
-## Project Structure
-
-```
-src/
-├── lib/
-│   ├── wallet.ts          # Wallet creation, encryption
-│   ├── storage.ts         # IndexedDB for local data
-│   ├── blockchain.ts      # Base Sepolia & USDC contract
-│   ├── voucher.ts         # Voucher creation & validation
-│   ├── firebase.ts        # Firestore integration
-│   └── settlement.ts      # Auto-settlement logic
-├── hooks/
-│   ├── useWallet.ts       # Wallet state management
-│   ├── useBalance.ts      # Balance calculations
-│   ├── useOnlineStatus.ts # Network detection
-│   └── useSettlement.ts   # Settlement orchestration
-├── components/
-│   ├── WalletSetup.tsx    # Create/import wallet
-│   ├── Dashboard.tsx      # Main balance view
-│   ├── SendOffline.tsx    # Offline send flow
-│   ├── ReceiveOffline.tsx # Offline receive flow
-│   ├── QRScanner.tsx      # Camera QR scanner
-│   └── TransactionHistory.tsx
-└── App.tsx                # Main app orchestration
-```
-
-## Troubleshooting
-
-### Camera not working
-- Grant camera permissions in browser
-- Use HTTPS (required for camera access)
-- Try a different browser
-
-### Settlement failing
-- Check if temporary wallet has ETH for gas
-- Verify you're online
-- Check Base Sepolia network status
-
-### Firebase errors
-- Verify Firebase config in `.env`
-- Check Firestore rules are deployed
-- Ensure anonymous auth is enabled
-
-## License
-
-MIT
-
-## Disclaimer
-
-⚠️ **This is experimental software for testing purposes only.**
-- Not audited
-- Use on testnet only
-- Never send real money
-- Always backup your recovery phrase
+A state-of-the-art, mobile-first web application that merges **Offline-First Resilience** with **Agentic Finance**. This system enables seamless stablecoin transactions in zero-connectivity environments and leverages autonomous AI agents for complex, internet-native payments using the x402 protocol.
 
 ---
 
-## Quick preview (run locally)
+## 🗺 System Map
 
-To preview the app and the landing page locally:
+```mermaid
+graph TD
+    subgraph "Client Device"
+        UI[React Mobile UI] <--> IDB[(Local IndexedDB)]
+        UI <--> SS[Settlement Service]
+    end
 
-```bash
-# install deps (if not already)
-npm install
+    subgraph "Agentic Backend (Python/LangGraph)"
+        API[FastAPI Layer] <--> LG[LangGraph Orchestrator]
+        LG <--> LLM[OpenAI GPT-4o]
+        LG <--> AS[Agentic State/Memory]
+    end
 
-# start dev server (Vite)
-npm run dev
+    subgraph "Connectivity Layers"
+        UI <--> API
+        UI <--> FB[(Firebase Cloud Sync)]
+        UI <--> BS[Base Sepolia Blockchain]
+    end
+
+    Admin[Admin Dashboard] <--> FB
+    Admin <--> BS
 ```
 
-Open the URL printed by Vite (usually http://localhost:5173) and you should see the app — the landing page will be the initial view when no wallet is unlocked.
+---
 
-If you'd like the landing page to show the exact mobile screenshot from your attachment, add the screenshot file to the project's `public/` folder with this filename:
+## 🧠 Design Decisions & Rationale
 
-```
-public/landing-screenshot.png
-```
+### 1. Offline-First "Local-Only" Mode
+*   **Decision**: Prioritize `IndexedDB` over cloud authentication.
+*   **Rationale**: Traditional wallets fail without internet. By encrypting keys locally and validating hashes against local storage, users can generate payment vouchers in "Airplane Mode." Firebase is used only as an *eventual consistency* layer for synchronization.
 
-Vite serves files from `public/` at the root, so the landing page will automatically display the image if present.
+### 2. LangGraph for Agentic Orchestration
+*   **Decision**: Use LangGraph instead of a simple linear chain.
+*   **Rationale**: Payments are non-linear. They require state branching (e.g., "If high price, negotiate; else, approve") and asynchronous "Human-in-the-loop" checkpoints. LangGraph handles the complex state transitions and persistent session memory natively.
+
+### 3. Protocol Alignment (x402)
+*   **Decision**: Adopt the Coinbase x402 standard over custom APIs.
+*   **Rationale**: To build for a machine-to-machine future, the wallet must speak the standard language of HTTP-native payments. This allows our agent to pay for any compliant resource (APIs, content, compute) without custom integrations.
+
+### 4. Settlement Reciprocity
+*   **Decision**: Settlement can be triggered by either the Sender or Receiver.
+*   **Rationale**: In an offline exchange, one party might reach internet connectivity before the other. By allowing either device to "sweep" the temporary voucher wallet upon reconnecting, we drastically reduce the time-to-finality.
+
+---
+
+## 🤖 The Agentic Process (LangGraph)
+
+Our `PaymentAgent` follows a sophisticated state-machine workflow to handle payments autonomously:
+
+1.  **Discovery Phase (`check_url`)**: 
+    The agent parses the target URL, inspecting HTTP headers and body for x402 requirements. It identifies the asset (USDC/EURC), amount, and network.
+2.  **Negotiation Phase (`negotiate`)**: 
+    If the server provides a negotiation endpoint or variable pricing, the AI analyzes the value proposition. It can propose counter-offers based on user-defined limits or historical data.
+3.  **Human Verification (`interrupt`)**: 
+    The graph **pauses** execution. It creates a "Checkpoint" in the backend, awaiting a `user_approved` signal from the frontend.
+4.  **Execution Phase (`execute`)**: 
+    Upon approval, the agent prepares the cryptographic proof (EIP-3009/EIP-2612). It doesn't hold keys; instead, it provides the instruction set to the Secure Client for signing.
+5.  **Reconciliation (`complete`)**: 
+    The agent verifies the transaction hash on-chain and retries the original request with the payment proof to unlock the content.
+
+---
+
+## � Advanced Features
+
+### Batch Payment Agent
+Processes a sequence of payments as a single unit of work. 
+*   **Logic**: Aggregates totals across tokens -> Requests 1-time approval -> Executes in sequence -> Provides audit log of successes/failures.
+
+### Scheduled & Recurring Agent
+A background worker that manages time-based value transfers.
+*   **Cron-for-Crypto**: Uses a task scheduler to wake the agent when payments are due.
+*   **Autonomous Checks**: The agent verifies balance availability before attempting execution to avoid wasted gas.
+
+---
+
+## 🛡 Security & Auditability
+
+*   **Encryption**: AES-GCM encryption for all local storage.
+*   **Receiver Locking**: Vouchers are cryptographically bound to the recipient's public key.
+*   **Admin Traceability**: Every administrative action (Force Settle, Mark Failed) is logged into an immutable Audit Log in Firestore for compliance.
+*   **Sandboxed Agents**: The AI agent proposes actions but never has direct access to private keys; all signatures occur in the client-side secure context.
+
+---
+
+## 🚀 Getting Started
+
+*Review the [Setup](#setup) section in the previous README for installation steps.*
+
+**Developer Tip**: Use the `System Health` tab in the Admin Dashboard to monitor RPC latency and ensure your AI agent is connecting to the Base Sepolia network correctly.

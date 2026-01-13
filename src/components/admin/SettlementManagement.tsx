@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { firebase } from '../../lib/firebase';
 import { adminActions } from '../../lib/adminActions';
 import { useAdminAuth } from '../../hooks/useAdminAuth';
-import { blockchain } from '../../lib/blockchain';
 import toast from 'react-hot-toast';
 
 interface PendingSettlement {
@@ -306,8 +305,8 @@ export function SettlementManagement() {
                                         </td>
                                         <td className="py-4 px-4 text-center">
                                             <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${settlement.status === 'pending'
-                                                    ? 'bg-amber-100 text-amber-700'
-                                                    : 'bg-red-100 text-red-700'
+                                                ? 'bg-amber-100 text-amber-700'
+                                                : 'bg-red-100 text-red-700'
                                                 }`}>
                                                 {settlement.status}
                                             </span>

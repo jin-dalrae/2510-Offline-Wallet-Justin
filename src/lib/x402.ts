@@ -62,8 +62,11 @@ export function createX402Fetch(
         transport: http(rpcUrl),
     });
 
-    // Convert to x402 signer format (wallet client already includes account)
-    const evmSigner = toClientEvmSigner(walletClient);
+    // Convert to x402 signer format (ensure address is present at top level)
+    const evmSigner = toClientEvmSigner({
+        ...walletClient,
+        address: account.address
+    } as any);
 
     // Create x402 client with EVM scheme registered for Base Sepolia
     const client = new x402Client()

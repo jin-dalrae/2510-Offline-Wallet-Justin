@@ -148,6 +148,7 @@ export function useAdminAuth(username?: string) {
 
   return {
     ...state,
+    adminUser: state.session,
     logout,
     refreshSession,
   };
