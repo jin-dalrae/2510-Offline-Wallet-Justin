@@ -23,6 +23,8 @@ load_dotenv()
 
 # Import agents
 from agents.payment_agent import agent_runner
+from agents.multi_payment_agent import multi_payment_runner, scheduler_runner
+
 
 # ============== FastAPI App ==============
 
@@ -271,7 +273,200 @@ async def cancel_session(session_id: str):
     raise HTTPException(status_code=404, detail="Session not found")
 
 
+# ============== Batch Payment Endpoints ==============
+
+class BatchPaymentRequest(BaseModel):
+    user_address: str
+    payments: list  # List of {recipient, amount, token, description?}
+
+
+class BatchPaymentResponse(BaseModel):
+    session_id: str
+    status: str
+    total_amount: str
+    payment_count: int
+    requires_approval: bool
+    messages: list
+
+
+class ConfirmBatchPaymentRequest(BaseModel):
+    session_id: str
+    payment_index: int
+    tx_hash: str
+    success: bool = True
+
+
+@app.post("/batch/start", response_model=BatchPaymentResponse)
+async def start_batch_payment(request: BatchPaymentRequest):
+    """
+    Start a batch payment session
+    
+    Prepares multiple payments to be executed sequentially.
+    """
+    session_id = str(uuid.uuid4())
+    
+    try:
+        result = await multi_payment_runner.start_batch(
+            session_id=session_id,
+            user_address=request.user_address,
+            payments=request.payments
+        )
+        
+        return BatchPaymentResponse(
+            session_id=session_id,
+            status=result['status'],
+            total_amount=result['total_amount'],
+            payment_count=len(result['payments']),
+            requires_approval=result['requires_approval'],
+            messages=result['messages']
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/batch/approve/{session_id}", response_model=BatchPaymentResponse)
+async def approve_batch_payment(session_id: str):
+    """Approve and start executing a batch payment"""
+    try:
+        result = await multi_payment_runner.approve_and_execute(session_id)
+        
+        return BatchPaymentResponse(
+            session_id=session_id,
+            status=result['status'],
+            total_amount=result['total_amount'],
+            payment_count=len(result['payments']),
+            requires_approval=result['requires_approval'],
+            messages=result['messages']
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/batch/confirm")
+async def confirm_batch_payment(request: ConfirmBatchPaymentRequest):
+    """Confirm a single payment in the batch was executed"""
+    try:
+        result = await multi_payment_runner.confirm_payment(
+            request.session_id,
+            request.payment_index,
+            request.tx_hash,
+            request.success
+        )
+        
+        return {
+            "session_id": request.session_id,
+            "status": result['status'],
+            "completed": len([p for p in result['completed_payments'] if p.get('status') == 'confirmed']),
+            "failed": len(result['failed_payments']),
+            "messages": result['messages']
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/batch/status/{session_id}")
+async def get_batch_status(session_id: str):
+    """Get the status of a batch payment session"""
+    session = multi_payment_runner.get_session(session_id)
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "session_id": session_id,
+        "status": session['status'],
+        "total_amount": session['total_amount'],
+        "completed": len([p for p in session['completed_payments'] if p.get('status') == 'confirmed']),
+        "pending": len([p for p in session['completed_payments'] if p.get('status') == 'pending_confirmation']),
+        "failed": len(session['failed_payments']),
+        "messages": session['messages']
+    }
+
+
+# ============== Scheduler Endpoints ==============
+
+class SchedulePaymentRequest(BaseModel):
+    user_address: str
+    recipient: str
+    amount: str
+    token: str = "USDC"
+    schedule_type: str = "immediate"  # immediate, scheduled, recurring
+    execute_at: Optional[str] = None  # ISO datetime for scheduled
+    recurring_interval_seconds: Optional[int] = None  # For recurring
+
+
+@app.post("/schedule/add")
+async def add_scheduled_payment(request: SchedulePaymentRequest):
+    """Add a scheduled or recurring payment"""
+    payment_id = str(uuid.uuid4())
+    
+    payment = scheduler_runner.add_scheduled_payment(
+        user_address=request.user_address,
+        payment_id=payment_id,
+        recipient=request.recipient,
+        amount=request.amount,
+        token=request.token,
+        schedule_type=request.schedule_type,
+        execute_at=request.execute_at,
+        recurring_interval_seconds=request.recurring_interval_seconds
+    )
+    
+    return {
+        "payment_id": payment_id,
+        "status": "scheduled",
+        "payment": payment
+    }
+
+
+@app.get("/schedule/list/{user_address}")
+async def list_scheduled_payments(user_address: str):
+    """List all scheduled payments for a user"""
+    payments = scheduler_runner.get_user_schedule(user_address)
+    
+    return {
+        "user_address": user_address,
+        "count": len(payments),
+        "payments": payments
+    }
+
+
+@app.post("/schedule/check/{user_address}")
+async def check_and_execute_scheduled(user_address: str):
+    """Check and execute any due scheduled payments"""
+    try:
+        result = await scheduler_runner.check_and_execute(user_address)
+        
+        return {
+            "user_address": user_address,
+            "status": result['status'],
+            "executed_count": len(result['pending_executions']),
+            "messages": result['messages']
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/schedule/cancel/{user_address}/{payment_id}")
+async def cancel_scheduled_payment(user_address: str, payment_id: str):
+    """Cancel a scheduled payment"""
+    success = scheduler_runner.cancel_payment(user_address, payment_id)
+    
+    if success:
+        return {"status": "cancelled", "payment_id": payment_id}
+    
+    raise HTTPException(status_code=404, detail="Payment not found or already executed")
+
+
 # ============== Run Server ==============
+
 
 if __name__ == "__main__":
     import uvicorn
