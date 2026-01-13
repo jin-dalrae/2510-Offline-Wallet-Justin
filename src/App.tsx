@@ -18,6 +18,10 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminOverview } from './components/admin/AdminOverview';
 import { UserManagement } from './components/admin/UserManagement';
+import { TransactionMonitor } from './components/admin/TransactionMonitor';
+import { SettlementManagement } from './components/admin/SettlementManagement';
+import { SystemHealth } from './components/admin/SystemHealth';
+import { AuditLog } from './components/admin/AuditLog';
 import { SettingsModal } from './components/SettingsModal';
 import { firebase } from './lib/firebase';
 import { storage } from './lib/storage';
@@ -309,12 +313,7 @@ function App() {
                     element={
                         <ProtectedAdminRoute>
                             <AdminDashboard>
-                                <div className="space-y-6">
-                                    <h1 className="text-3xl font-bold text-slate-900">Transaction Monitor</h1>
-                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                                        <p className="text-slate-600">Coming soon...</p>
-                                    </div>
-                                </div>
+                                <TransactionMonitor />
                             </AdminDashboard>
                         </ProtectedAdminRoute>
                     }
@@ -325,12 +324,7 @@ function App() {
                     element={
                         <ProtectedAdminRoute>
                             <AdminDashboard>
-                                <div className="space-y-6">
-                                    <h1 className="text-3xl font-bold text-slate-900">Settlement Management</h1>
-                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                                        <p className="text-slate-600">Coming soon...</p>
-                                    </div>
-                                </div>
+                                <SettlementManagement />
                             </AdminDashboard>
                         </ProtectedAdminRoute>
                     }
@@ -341,12 +335,7 @@ function App() {
                     element={
                         <ProtectedAdminRoute>
                             <AdminDashboard>
-                                <div className="space-y-6">
-                                    <h1 className="text-3xl font-bold text-slate-900">System Health</h1>
-                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                                        <p className="text-slate-600">Coming soon...</p>
-                                    </div>
-                                </div>
+                                <SystemHealth />
                             </AdminDashboard>
                         </ProtectedAdminRoute>
                     }
@@ -357,12 +346,7 @@ function App() {
                     element={
                         <ProtectedAdminRoute>
                             <AdminDashboard>
-                                <div className="space-y-6">
-                                    <h1 className="text-3xl font-bold text-slate-900">Audit Log</h1>
-                                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                                        <p className="text-slate-600">Coming soon...</p>
-                                    </div>
-                                </div>
+                                <AuditLog />
                             </AdminDashboard>
                         </ProtectedAdminRoute>
                     }

@@ -10,7 +10,7 @@ import { LoadMoney } from './LoadMoney';
 import { SendOffline } from './SendOffline';
 import { ReceiveOffline } from './ReceiveOffline';
 import { useTransactions } from '../hooks/useTransactions';
-import { PayUrl } from './PayUrl';
+import { SmartPayUrl } from './SmartPayUrl';
 
 interface NewDashboardProps {
     accountName: string;
@@ -301,12 +301,12 @@ export function NewDashboard({
                         </button>
                         <button
                             onClick={() => setShowPayUrl(true)}
-                            className="col-span-3 bg-amber-100/60 backdrop-blur-sm text-amber-900 rounded-2xl py-3 font-bold text-sm hover:bg-amber-100 transition shadow-sm flex items-center justify-center gap-2"
+                            className="col-span-3 bg-gradient-to-r from-violet-100 to-purple-100 backdrop-blur-sm text-violet-900 rounded-2xl py-3 font-bold text-sm hover:from-violet-200 hover:to-purple-200 transition shadow-sm flex items-center justify-center gap-2"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
-                            Browser (x402)
+                            Smart Pay (x402 AI)
                         </button>
                     </div>
 
@@ -561,10 +561,14 @@ export function NewDashboard({
             )}
 
             {showPayUrl && (
-                <PayUrl
+                <SmartPayUrl
                     wallet={wallet}
                     balance={balance}
                     onClose={() => setShowPayUrl(false)}
+                    onPaymentComplete={(txHash) => {
+                        console.log('Payment completed:', txHash);
+                        onRefresh();
+                    }}
                 />
             )}
         </div >
