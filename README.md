@@ -1,97 +1,217 @@
-# Offline Stablecoin Wallet + AI Payment Agent (x402)
+<p align="center">
+  <img src="./justin_logo.svg" alt="Justin Logo" width="120"/>
+</p>
 
-A state-of-the-art, mobile-first web application that merges **Offline-First Resilience** with **Agentic Finance**. This system enables seamless stablecoin transactions in zero-connectivity environments and leverages autonomous AI agents for complex, internet-native payments using the x402 protocol.
+<h1 align="center">Justin</h1>
+<h3 align="center">The First Offline-Native AI Wallet for the Machine Economy</h3>
+
+<p align="center">
+  <strong>Stablecoins work everywhere. Even without the internet.</strong><br/>
+  With autonomous AI agents that pay for you.
+</p>
 
 ---
 
-## 🗺 System Map
+## The Problem
 
-```mermaid
-graph TD
-    subgraph "Client Device"
-        UI[React Mobile UI] <--> IDB[(Local IndexedDB)]
-        UI <--> SS[Settlement Service]
-    end
+**Cash is dying—but digital payments fail when you need them most.**
 
-    subgraph "Agentic Backend (Python/LangGraph)"
-        API[FastAPI Layer] <--> LG[LangGraph Orchestrator]
-        LG <--> LLM[OpenAI GPT-4o]
-        LG <--> AS[Agentic State/Memory]
-    end
+The US is rapidly moving toward a cashless future. Stablecoins like USDC offer the promise of instant, low-cost digital payments. But there's a critical flaw: **crypto wallets don't work without internet**.
 
-    subgraph "Connectivity Layers"
-        UI <--> API
-        UI <--> FB[(Firebase Cloud Sync)]
-        UI <--> BS[Base Sepolia Blockchain]
-    end
+- 📵 **Network outages**: During emergencies, disasters, or just bad service, digital payments stop working
+- 🏔️ **Coverage gaps**: Rural areas, subways, airplanes, basements—millions of daily transactions happen offline
+- ⚡ **Real-time expectations**: Unlike card payments that can batch later, crypto wallets simply fail without connectivity
 
-    Admin[Admin Dashboard] <--> FB
-    Admin <--> BS
+When USDC replaces the dollar in your pocket, **"no signal" can't mean "no money."**
+
+Meanwhile, **AI agents** are emerging that need to pay for APIs, content, and services autonomously—but they lack wallets designed for machine-to-machine commerce.
+
+---
+
+## Our Solution
+
+**Justin** is a USDC wallet on Coinbase's Base network that works **completely offline**—designed to replace cash in a fully digital economy.
+
+### 1. Offline-First Architecture: Pending Amounts & Allowances
+
+Justin doesn't just "queue" transactions—it implements a **true offline spending system** with cryptographic guarantees:
+
+| Concept | Description |
+|---------|-------------|
+| **Offline Allowance** | Pre-authorized spending limit you can use without internet |
+| **Pending Amount** | Transaction amounts held locally until settlement |
+| **Settlement Limit** | Maximum unsettled balance before online sync required |
+| **Auto-Settlement** | When *either* party goes online, pending amounts settle to the blockchain |
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  OFFLINE SPENDING SYSTEM                                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────────────────┐                                   │
+│  │  YOUR WALLET             │                                   │
+│  ├──────────────────────────┤                                   │
+│  │  On-Chain Balance: $500  │  ◀── Actual USDC on Base         │
+│  │  ─────────────────────── │                                   │
+│  │  Offline Allowance: $100 │  ◀── How much you CAN spend      │
+│  │  Pending Sent: -$35      │  ◀── Unconfirmed outgoing        │
+│  │  Pending Received: +$20  │  ◀── Unconfirmed incoming        │
+│  │  ─────────────────────── │                                   │
+│  │  Available Offline: $65  │  ◀── Remaining spendable offline │
+│  └──────────────────────────┘                                   │
+│                                                                 │
+│  When you go online:                                            │
+│  • Pending Sent (-$35) settles → USDC transfers on-chain        │
+│  • Pending Received (+$20) settles → USDC received on-chain     │
+│  • Offline Allowance resets based on new balance                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### How Offline Transactions Work
+
+1. **Sender creates a cryptographic voucher** (signed, encrypted, with temp wallet)
+2. **Receiver scans QR code** and verifies the signature locally
+3. **Both parties update their pending amounts** immediately
+4. **First party to go online triggers settlement** for everyone in the chain
+
+This means you can pay a friend, who pays a merchant, who pays a supplier—**all offline**—and it settles when any single person reconnects.
+
+### 2. AI Agents for Web3 Payments (x402 Protocol)
+
+Justin implements the **[x402 protocol](https://x402.org)**—the HTTP-native payment standard developed by Coinbase. Our AI agents handle:
+
+- **Automatic Discovery**: Detects when a URL requires payment (via HTTP 402)
+- **Smart Negotiation**: AI analyzes pricing and can counter-offer
+- **Human-in-the-Loop Approval**: Users always approve before execution
+- **Batch & Scheduled Payments**: Recurring subscriptions and multi-recipient payroll
+
+```
+User: "Pay for this API endpoint"
+   │
+   ▼
+┌─────────────────────────────────────────┐
+│  LANGGRAPH PAYMENT AGENT                │
+├─────────────────────────────────────────┤
+│  [1] check_url   → Parse 402 headers    │
+│  [2] negotiate   → Analyze value/price  │
+│  [3] interrupt   → Await user approval  │
+│  [4] execute     → Sign & broadcast     │
+│  [5] complete    → Verify on-chain      │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## 🧠 Design Decisions & Rationale
+## Why Now?
 
-### 1. Offline-First "Local-Only" Mode
-*   **Decision**: Prioritize `IndexedDB` over cloud authentication.
-*   **Rationale**: Traditional wallets fail without internet. By encrypting keys locally and validating hashes against local storage, users can generate payment vouchers in "Airplane Mode." Firebase is used only as an *eventual consistency* layer for synchronization.
+| Trend | Implication |
+|-------|-------------|
+| **Stablecoin adoption up 400% YoY** | Demand for real-world payment rails |
+| **AI agent ecosystem emerging** | Agents need wallets that can pay autonomously |
+| **Coinbase x402 protocol launched** | First standard for HTTP-native payments |
+| **Account abstraction (ERC-4337)** | Gas-free, user-friendly transactions |
 
-### 2. LangGraph for Agentic Orchestration
-*   **Decision**: Use LangGraph instead of a simple linear chain.
-*   **Rationale**: Payments are non-linear. They require state branching (e.g., "If high price, negotiate; else, approve") and asynchronous "Human-in-the-loop" checkpoints. LangGraph handles the complex state transitions and persistent session memory natively.
-
-### 3. Protocol Alignment (x402)
-*   **Decision**: Adopt the Coinbase x402 standard over custom APIs.
-*   **Rationale**: To build for a machine-to-machine future, the wallet must speak the standard language of HTTP-native payments. This allows our agent to pay for any compliant resource (APIs, content, compute) without custom integrations.
-
-### 4. Settlement Reciprocity
-*   **Decision**: Settlement can be triggered by either the Sender or Receiver.
-*   **Rationale**: In an offline exchange, one party might reach internet connectivity before the other. By allowing either device to "sweep" the temporary voucher wallet upon reconnecting, we drastically reduce the time-to-finality.
+The convergence of **stablecoin mainstream adoption**, **AI agent proliferation**, and **standardized payment protocols** creates a once-in-a-decade window.
 
 ---
 
-## 🤖 The Agentic Process (LangGraph)
+## Traction & Metrics
 
-Our `PaymentAgent` follows a sophisticated state-machine workflow to handle payments autonomously:
-
-1.  **Discovery Phase (`check_url`)**: 
-    The agent parses the target URL, inspecting HTTP headers and body for x402 requirements. It identifies the asset (USDC/EURC), amount, and network.
-2.  **Negotiation Phase (`negotiate`)**: 
-    If the server provides a negotiation endpoint or variable pricing, the AI analyzes the value proposition. It can propose counter-offers based on user-defined limits or historical data.
-3.  **Human Verification (`interrupt`)**: 
-    The graph **pauses** execution. It creates a "Checkpoint" in the backend, awaiting a `user_approved` signal from the frontend.
-4.  **Execution Phase (`execute`)**: 
-    Upon approval, the agent prepares the cryptographic proof (EIP-3009/EIP-2612). It doesn't hold keys; instead, it provides the instruction set to the Secure Client for signing.
-5.  **Reconciliation (`complete`)**: 
-    The agent verifies the transaction hash on-chain and retries the original request with the payment proof to unlock the content.
+| Metric | Value |
+|--------|-------|
+| 🔧 **Build Status** | Production-ready MVP on Base Sepolia |
+| 🌐 **Protocol** | Full x402 SDK integration |
+| 🤖 **AI Backend** | LangGraph multi-agent orchestration |
+| 📱 **Platform** | PWA (mobile-first, installable) |
 
 ---
 
-## � Advanced Features
+## Technology Stack
 
-### Batch Payment Agent
-Processes a sequence of payments as a single unit of work. 
-*   **Logic**: Aggregates totals across tokens -> Requests 1-time approval -> Executes in sequence -> Provides audit log of successes/failures.
-
-### Scheduled & Recurring Agent
-A background worker that manages time-based value transfers.
-*   **Cron-for-Crypto**: Uses a task scheduler to wake the agent when payments are due.
-*   **Autonomous Checks**: The agent verifies balance availability before attempting execution to avoid wasted gas.
-
----
-
-## 🛡 Security & Auditability
-
-*   **Encryption**: AES-GCM encryption for all local storage.
-*   **Receiver Locking**: Vouchers are cryptographically bound to the recipient's public key.
-*   **Admin Traceability**: Every administrative action (Force Settle, Mark Failed) is logged into an immutable Audit Log in Firestore for compliance.
-*   **Sandboxed Agents**: The AI agent proposes actions but never has direct access to private keys; all signatures occur in the client-side secure context.
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Frontend** | React + TypeScript | Mobile-first PWA |
+| **Offline Storage** | IndexedDB (encrypted) | Zero-dependency local state |
+| **Blockchain** | Base (Coinbase L2) | Low fees, high throughput |
+| **AI Agents** | LangGraph + GPT-4 | Stateful, interruptible workflows |
+| **Sync Layer** | Firebase Firestore | Optional cross-device sync |
+| **Payment Protocol** | x402 (EIP-3009) | HTTP-native stablecoin payments |
 
 ---
 
-## 🚀 Getting Started
+## Business Model
 
-*Review the [Setup](#setup) section in the previous README for installation steps.*
+| Revenue Stream | Description |
+|----------------|-------------|
+| **Settlement Fees** | 0.1% on offline voucher settlements |
+| **Agent Transactions** | Per-use fee for AI payment execution |
+| **Enterprise API** | White-label offline payment SDK |
+| **Premium Features** | Multi-wallet, batch payments, analytics |
 
-**Developer Tip**: Use the `System Health` tab in the Admin Dashboard to monitor RPC latency and ensure your AI agent is connecting to the Base Sepolia network correctly.
+---
+
+## Go-to-Market Strategy
+
+### Phase 1: Emerging Market Partnerships (Months 1-6)
+- Partner with **mobile money providers** in Africa & Southeast Asia
+- Target **agricultural cooperatives** and **micro-merchants**
+- Offline remittance corridors (US → Philippines, UAE → India)
+
+### Phase 2: Developer Ecosystem (Months 6-12)
+- Open-source the x402 integration toolkit
+- Hackathon sponsorships (ETH Global, Base Buildathon)
+- API for AI agent developers
+
+### Phase 3: Enterprise Scale (Year 2+)
+- B2B payroll solutions for distributed workforces
+- Integration with major crypto payment processors
+- Expansion to EURC and other regional stablecoins
+
+---
+
+## Competitive Landscape
+
+| Feature | Justin | Traditional Wallets | Mobile Money |
+|---------|--------|--------------------| -------------|
+| Offline Transactions | ✅ Native | ❌ Requires internet | ⚠️ USSD only |
+| AI Agent Payments | ✅ x402 Protocol | ❌ None | ❌ None |
+| Stablecoin Native | ✅ USDC/EURC | ✅ Yes | ❌ Fiat locked |
+| Auto-Settlement | ✅ Either party | ❌ N/A | ❌ N/A |
+| Gas-Free UX | ✅ Smart Wallet ready | ⚠️ Varies | ✅ N/A |
+
+---
+
+## The Team
+
+Building the bridge between **offline reality** and **on-chain finance**.
+
+*[Team section to be populated]*
+
+---
+
+## The Ask
+
+**Raising: $X Seed Round**
+
+| Use of Funds | Allocation |
+|--------------|------------|
+| Engineering | 60% |
+| Go-to-Market (Emerging Markets) | 25% |
+| Legal & Compliance | 10% |
+| Operations | 5% |
+
+---
+
+## Contact
+
+📧 **[Email]**  
+🔗 **[Website]**  
+𝕏 **[@handle]**  
+
+---
+
+<p align="center">
+  <strong>Justin</strong><br/>
+  <em>Payments that work when the internet doesn't.</em>
+</p>
