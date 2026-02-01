@@ -66,6 +66,17 @@ function App() {
         initializeServices();
     }, []);
 
+    // Auto-redirect logged-in users away from auth pages to dashboard
+    useEffect(() => {
+        if (wallet.isUnlocked) {
+            const currentPath = window.location.pathname;
+            // If user is logged in and on a public page, redirect to dashboard
+            if (currentPath === '/' || currentPath === '/signup' || currentPath === '/signin') {
+                navigate('/dashboard');
+            }
+        }
+    }, [wallet.isUnlocked, navigate]);
+
     // Show settlement notifications
     useEffect(() => {
         if (settlement.isSettling) {
@@ -177,6 +188,7 @@ function App() {
                         <SignIn
                             onComplete={handleSignIn}
                             onBack={() => navigate('/')}
+                            onSignUp={() => navigate('/signup')}
                         />
                     }
                 />

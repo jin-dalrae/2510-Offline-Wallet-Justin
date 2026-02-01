@@ -70,7 +70,7 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                     <div className="space-y-8 animate-fade-in-up">
                         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/30 backdrop-blur-md text-slate-900 text-xs font-bold uppercase tracking-wider border border-white/20">
                             <span className="w-2 h-2 rounded-full bg-slate-900 animate-pulse" />
-                            The Future of Payments
+                            x402 Protocol Enabled
                         </div>
 
                         <h1 className="text-5xl lg:text-7xl font-serif font-bold leading-tight text-slate-900">
@@ -155,7 +155,7 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                         </p>
                     </div>
 
-                    <div className="grid md:grid-cols-3 gap-8">
+                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
                         {[
                             {
                                 title: "True Ownership",
@@ -166,6 +166,11 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                                 title: "Offline First",
                                 desc: "Transact anywhere. Our proprietary voucher system enables secure peer-to-peer payments without connectivity.",
                                 icon: "📡"
+                            },
+                            {
+                                title: "AI-Powered Payments",
+                                desc: "Let AI agents pay on your behalf. Smart Pay automatically handles x402 paywalls and negotiates microtransactions.",
+                                icon: "🤖"
                             },
                             {
                                 title: "Universal Access",
@@ -188,27 +193,27 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                 <div className="max-w-7xl mx-auto px-6">
                     <div className="grid lg:grid-cols-2 gap-16 items-center">
                         <div>
-                            <h2 className="text-4xl md:text-5xl font-serif font-bold mb-8">Powered by <br /><span className="text-[#4bf2e6]">Advanced Cryptography</span></h2>
+                            <h2 className="text-4xl md:text-5xl font-serif font-bold mb-8">Powered by <br /><span className="text-[#4bf2e6]">x402 Protocol</span></h2>
                             <div className="space-y-8">
                                 <div className="flex gap-6">
                                     <div className="w-12 h-12 rounded-xl bg-[#4bf2e6]/20 flex items-center justify-center text-[#4bf2e6] font-bold text-xl shrink-0">01</div>
                                     <div>
-                                        <h3 className="text-xl font-bold mb-2">Zero-Knowledge Proofs</h3>
-                                        <p className="text-slate-400">Verifying transactions without revealing sensitive data, ensuring privacy at every step.</p>
+                                        <h3 className="text-xl font-bold mb-2">HTTP-Native Payments</h3>
+                                        <p className="text-slate-400">Built on Coinbase's x402 standard. Pay for APIs, content, and AI services with a single HTTP request.</p>
                                     </div>
                                 </div>
                                 <div className="flex gap-6">
                                     <div className="w-12 h-12 rounded-xl bg-[#4bf2e6]/20 flex items-center justify-center text-[#4bf2e6] font-bold text-xl shrink-0">02</div>
                                     <div>
-                                        <h3 className="text-xl font-bold mb-2">Local Settlement</h3>
-                                        <p className="text-slate-400">Transactions are signed locally and settled on-chain only when you reconnect.</p>
+                                        <h3 className="text-xl font-bold mb-2">AI Agent Ready</h3>
+                                        <p className="text-slate-400">Let autonomous agents handle payments. Smart Pay negotiates and pays x402 paywalls automatically.</p>
                                     </div>
                                 </div>
                                 <div className="flex gap-6">
                                     <div className="w-12 h-12 rounded-xl bg-[#4bf2e6]/20 flex items-center justify-center text-[#4bf2e6] font-bold text-xl shrink-0">03</div>
                                     <div>
-                                        <h3 className="text-xl font-bold mb-2">Smart Account Abstraction</h3>
-                                        <p className="text-slate-400">Recovery, batching, and gas sponsorship built-in. The complexity is hidden.</p>
+                                        <h3 className="text-xl font-bold mb-2">Offline Settlement</h3>
+                                        <p className="text-slate-400">Transactions are signed locally and settled on-chain when you reconnect. Works anywhere.</p>
                                     </div>
                                 </div>
                             </div>
@@ -218,17 +223,16 @@ export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDem
                             <div className="relative bg-[#2d4a6f] p-8 rounded-3xl border border-[#3d5a7f]">
                                 <pre className="font-mono text-sm text-[#4bf2e6] overflow-x-auto">
                                     <code>{`
-// Secure Offline Transfer
-async function transfer(amount, recipient) {
-  const voucher = await createVoucher({
-    amount: amount,
-    to: recipient,
-    nonce: generateNonce()
-  });
-  
-  const signature = await sign(voucher);
-  return encodeQR({ ...voucher, signature });
-}
+// x402 AI Agent Payment
+import { x402Fetch } from '@x402/fetch';
+
+const response = await x402Fetch(
+  'https://api.example.com/premium-data',
+  { wallet: myWallet }
+);
+
+// Payment handled automatically!
+const data = await response.json();
                   `}</code>
                                 </pre>
                             </div>

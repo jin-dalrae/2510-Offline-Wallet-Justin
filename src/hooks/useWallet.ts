@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { WalletManager } from '../lib/wallet';
 import { storage } from '../lib/storage';
 import { ethers } from 'ethers';
+
+// Session keys for cross-tab sync
+const SESSION_KEY = 'wallet_session_active';
+const SESSION_TIMESTAMP_KEY = 'wallet_session_timestamp';
 
 export interface WalletState {
     isInitialized: boolean;
@@ -22,7 +26,10 @@ export function useWallet() {
         walletManager: null,
     });
 
-    // Check if wallet exists in storage
+    // Track if we've already auto-unlocked to prevent loops
+    const hasAutoUnlocked = useRef(false);
+
+    // Check if wallet exists and auto-unlock if session is active
     useEffect(() => {
         const checkWallet = async () => {
             try {
@@ -30,14 +37,48 @@ export function useWallet() {
                 const walletData = await storage.getWallet();
 
                 if (walletData) {
-                    setState({
-                        isInitialized: true,
-                        isUnlocked: false, // Always start locked for security
-                        address: walletData.address,
-                        accountName: walletData.accountName || 'My Wallet',
-                        profilePicture: walletData.profilePicture || null,
-                        walletManager: null,
-                    });
+                    // Check if there's an active session from another tab
+                    const sessionActive = localStorage.getItem(SESSION_KEY) === 'true';
+                    
+                    if (sessionActive && !hasAutoUnlocked.current) {
+                        // Auto-unlock the wallet since session is active
+                        hasAutoUnlocked.current = true;
+                        const defaultPassword = 'default-password-for-demo';
+                        try {
+                            const walletManager = new WalletManager();
+                            await walletManager.unlock(walletData.encryptedPrivateKey, defaultPassword);
+                            
+                            setState({
+                                isInitialized: true,
+                                isUnlocked: true,
+                                address: walletData.address,
+                                accountName: walletData.accountName || 'My Wallet',
+                                profilePicture: walletData.profilePicture || null,
+                                walletManager,
+                            });
+                        } catch (unlockError) {
+                            console.error('Failed to auto-unlock wallet:', unlockError);
+                            // Clear invalid session
+                            localStorage.removeItem(SESSION_KEY);
+                            setState({
+                                isInitialized: true,
+                                isUnlocked: false,
+                                address: walletData.address,
+                                accountName: walletData.accountName || 'My Wallet',
+                                profilePicture: walletData.profilePicture || null,
+                                walletManager: null,
+                            });
+                        }
+                    } else {
+                        setState({
+                            isInitialized: true,
+                            isUnlocked: false,
+                            address: walletData.address,
+                            accountName: walletData.accountName || 'My Wallet',
+                            profilePicture: walletData.profilePicture || null,
+                            walletManager: null,
+                        });
+                    }
                 }
             } catch (error) {
                 console.error('Error checking wallet:', error);
@@ -46,6 +87,50 @@ export function useWallet() {
 
         checkWallet();
     }, []);
+
+    // Listen for session changes from other tabs
+    useEffect(() => {
+        const handleStorageChange = async (event: StorageEvent) => {
+            if (event.key === SESSION_KEY) {
+                if (event.newValue === 'true' && !state.isUnlocked) {
+                    // Another tab logged in, auto-unlock this tab
+                    try {
+                        await storage.init();
+                        const walletData = await storage.getWallet();
+                        if (walletData) {
+                            const defaultPassword = 'default-password-for-demo';
+                            const walletManager = new WalletManager();
+                            await walletManager.unlock(walletData.encryptedPrivateKey, defaultPassword);
+                            
+                            setState({
+                                isInitialized: true,
+                                isUnlocked: true,
+                                address: walletData.address,
+                                accountName: walletData.accountName || 'My Wallet',
+                                profilePicture: walletData.profilePicture || null,
+                                walletManager,
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Failed to sync session from other tab:', error);
+                    }
+                } else if (event.newValue === null && state.isUnlocked) {
+                    // Another tab logged out, lock this tab too
+                    if (state.walletManager) {
+                        state.walletManager.lock();
+                    }
+                    setState(prev => ({
+                        ...prev,
+                        isUnlocked: false,
+                        walletManager: null
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, [state.isUnlocked, state.walletManager]);
 
     const createWallet = useCallback(
         async (accountName: string, privateKey: string): Promise<void> => {
@@ -64,6 +149,10 @@ export function useWallet() {
 
             const walletManager = new WalletManager();
             await walletManager.unlock(encryptedPrivateKey, defaultPassword);
+
+            // Set session active in localStorage for cross-tab sync
+            localStorage.setItem(SESSION_KEY, 'true');
+            localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
 
             setState({
                 isInitialized: true,
@@ -96,6 +185,10 @@ export function useWallet() {
                 const walletManager = new WalletManager();
                 await walletManager.unlock(storedWallet.encryptedPrivateKey, defaultPassword);
 
+                // Set session active in localStorage for cross-tab sync
+                localStorage.setItem(SESSION_KEY, 'true');
+                localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+
                 setState({
                     isInitialized: true,
                     isUnlocked: true,
@@ -117,6 +210,10 @@ export function useWallet() {
                 const walletManager = new WalletManager();
                 await walletManager.unlock(encryptedPrivateKey, defaultPassword);
 
+                // Set session active in localStorage for cross-tab sync
+                localStorage.setItem(SESSION_KEY, 'true');
+                localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+
                 setState({
                     isInitialized: true,
                     isUnlocked: true,
@@ -134,6 +231,10 @@ export function useWallet() {
         if (state.walletManager) {
             state.walletManager.lock();
         }
+        // Clear session for cross-tab sync
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_TIMESTAMP_KEY);
+        
         setState(prev => ({
             ...prev,
             isUnlocked: false,

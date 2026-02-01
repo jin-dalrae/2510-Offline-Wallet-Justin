@@ -30,7 +30,7 @@ export const USDC_CONTRACT_ADDRESS =
     '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Base Sepolia USDC
 
 export const CBBTC_CONTRACT_ADDRESS = '0xcbB7C0006F23900c38EB856149F799620fcb8A4a'; // Base Sepolia cbBTC
-export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182f45f49ff'; // Placeholder for EURC (using a known testnet token or mock)
+export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182bf77359F'; // EURC on Base Sepolia
 
 export class BlockchainService {
     private provider: ethers.JsonRpcProvider;

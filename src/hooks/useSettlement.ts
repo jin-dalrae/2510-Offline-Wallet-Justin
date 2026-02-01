@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { settlement, SettlementResult } from '../lib/settlement';
 import { firebase } from '../lib/firebase';
 import { ethers } from 'ethers';
+import toast from 'react-hot-toast';
 
 export interface SettlementState {
     isSettling: boolean;
@@ -60,6 +61,17 @@ export function useSettlement(
                     }));
                 }
             );
+
+            // Show toast notifications for results
+            const successCount = results.filter(r => r.success).length;
+            const failCount = results.filter(r => !r.success).length;
+
+            if (successCount > 0) {
+                toast.success(`Settled ${successCount} transaction${successCount > 1 ? 's' : ''} successfully!`);
+            }
+            if (failCount > 0) {
+                toast.error(`${failCount} transaction${failCount > 1 ? 's' : ''} failed to settle.`);
+            }
 
             setState({
                 isSettling: false,

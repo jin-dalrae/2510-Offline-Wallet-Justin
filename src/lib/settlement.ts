@@ -13,6 +13,12 @@ export interface SettlementResult {
     txHash?: string;
     error?: string;
     retries?: number;
+    transactionId?: string;
+}
+
+interface SettlementConfig {
+    maxRetries: number;
+    retryDelayMs: number;
 }
 
 async function delay(ms: number): Promise<void> {
@@ -21,6 +27,10 @@ async function delay(ms: number): Promise<void> {
 
 export class SettlementService {
     private isSettling: boolean = false;
+    private config: SettlementConfig = {
+        maxRetries: 3,
+        retryDelayMs: 2000,
+    };
 
     /**
      * Settle all pending received transactions
@@ -62,11 +72,12 @@ export class SettlementService {
 
                 let result: SettlementResult;
                 if (tx.type === 'sent') {
-                    result = await this.settleSentTransaction(tx, mainWallet);
+                    result = await this.settleSentTransactionWithRetry(tx, mainWallet);
                 } else {
                     result = await this.settleReceivedTransaction(tx, mainWallet);
                 }
 
+                result.transactionId = tx.id;
                 results.push(result);
 
                 // Small delay to prevent rate limits
@@ -94,6 +105,45 @@ export class SettlementService {
         }
 
         return results;
+    }
+
+    /**
+     * Settle a 'sent' transaction with retry logic
+     */
+    private async settleSentTransactionWithRetry(
+        tx: PendingTransaction,
+        wallet: ethers.HDNodeWallet | ethers.Wallet
+    ): Promise<SettlementResult> {
+        let lastError: Error | null = null;
+
+        for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
+            const result = await this.settleSentTransaction(tx, wallet);
+
+            if (result.success) {
+                return { ...result, retries: attempt };
+            }
+
+            lastError = new Error(result.error);
+
+            // Don't retry if it's a permanent failure
+            if (result.error?.includes('insufficient funds') ||
+                result.error?.includes('Insufficient ETH')) {
+                return result;
+            }
+
+            // Exponential backoff
+            if (attempt < this.config.maxRetries - 1) {
+                const backoffMs = this.config.retryDelayMs * Math.pow(2, attempt);
+                console.log(`Settlement attempt ${attempt + 1} failed, retrying in ${backoffMs}ms...`);
+                await delay(backoffMs);
+            }
+        }
+
+        return {
+            success: false,
+            error: lastError?.message || 'Max retries exceeded',
+            retries: this.config.maxRetries,
+        };
     }
 
     /**

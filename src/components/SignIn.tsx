@@ -6,9 +6,10 @@ import { firebase } from '../lib/firebase';
 interface SignInProps {
     onComplete: (privateKey: string) => void;
     onBack: () => void;
+    onSignUp?: () => void;
 }
 
-export function SignIn({ onComplete, onBack }: SignInProps) {
+export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
     const [mode, setMode] = useState<'password' | 'key'>('password');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -22,6 +23,7 @@ export function SignIn({ onComplete, onBack }: SignInProps) {
         }
 
         setIsLoading(true);
+        const usernameInput = username.trim().toLowerCase();
 
         try {
             // Try local storage first (for local-only mode)
@@ -29,9 +31,10 @@ export function SignIn({ onComplete, onBack }: SignInProps) {
             await storage.init();
             const localWallets = await storage.getAllWallets();
 
-            // Check if any local wallet matches the account name
+            // Search by both accountName AND any stored username/identifier
             const localWallet = localWallets.find(
-                w => w.accountName?.toLowerCase() === username.trim().toLowerCase()
+                w => w.accountName?.toLowerCase() === usernameInput ||
+                    w.address?.toLowerCase() === usernameInput
             );
 
             if (localWallet) {
@@ -42,44 +45,50 @@ export function SignIn({ onComplete, onBack }: SignInProps) {
                     toast.success('Welcome back!');
                     return;
                 } catch (decryptError) {
-                    // Wrong password - continue to try Firebase
-                    console.log('Local decrypt failed, trying Firebase...');
+                    // Wrong password for local wallet
+                    toast.error('Incorrect password');
+                    setIsLoading(false);
+                    return;
                 }
             }
 
-            // Try Firebase
+            // Try Firebase if local not found
             if (firebase.isInitialized()) {
                 const user = await firebase.getUser(username);
 
                 if (!user) {
-                    toast.error('User not found');
+                    toast.error('Account not found. Check your username or create a new account.');
                     setIsLoading(false);
                     return;
                 }
 
                 // Decrypt wallet
-                const wallet = await ethers.Wallet.fromEncryptedJson(user.encryptedWallet, password);
-
-                // Save locally for future offline access
                 try {
-                    const walletId = await storage.addWallet(
-                        wallet.address,
-                        user.encryptedWallet,
-                        user.accountName
-                    );
-                    await storage.setActiveWallet(walletId);
-                } catch (e) {
-                    console.warn('Could not cache wallet locally:', e);
-                }
+                    const wallet = await ethers.Wallet.fromEncryptedJson(user.encryptedWallet, password);
 
-                onComplete(wallet.privateKey);
-                toast.success('Welcome back!');
+                    // Save locally for future offline access
+                    try {
+                        const walletId = await storage.addWallet(
+                            wallet.address,
+                            user.encryptedWallet,
+                            user.accountName
+                        );
+                        await storage.setActiveWallet(walletId);
+                    } catch (e) {
+                        console.warn('Could not cache wallet locally:', e);
+                    }
+
+                    onComplete(wallet.privateKey);
+                    toast.success('Welcome back!');
+                } catch (decryptError) {
+                    toast.error('Incorrect password');
+                }
             } else {
-                toast.error('User not found (offline mode)');
+                toast.error('Account not found locally. Connect to internet or create a new account.');
             }
         } catch (error) {
             console.error('Sign in error:', error);
-            toast.error('Invalid password or login failed');
+            toast.error('Sign in failed. Please try again.');
         } finally {
             setIsLoading(false);
         }
@@ -237,13 +246,26 @@ export function SignIn({ onComplete, onBack }: SignInProps) {
                             )}
                         </button>
 
-                        <div className="text-center pt-4">
+                        <div className="text-center pt-4 space-y-3">
                             <button
                                 onClick={() => setMode('key')}
                                 className="text-slate-500 hover:text-slate-900 text-sm font-medium underline"
                             >
                                 I want to use my recovery phrase instead
                             </button>
+                            {onSignUp && (
+                                <div className="pt-2 border-t border-slate-200">
+                                    <p className="text-sm text-slate-500">
+                                        Don't have an account?{' '}
+                                        <button
+                                            onClick={onSignUp}
+                                            className="text-slate-900 font-bold hover:underline"
+                                        >
+                                            Create Account
+                                        </button>
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ) : (

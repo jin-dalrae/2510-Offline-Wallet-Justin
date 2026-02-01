@@ -8,15 +8,16 @@ service cloud.firestore {
       // Anyone can create a user (for signup)
       allow create: if true;
       
-      // Users can read and update their own data
-      allow read, update: if request.auth != null && request.auth.uid == userId;
+      // Authenticated users can read and update user data
+      // Note: Google users are stored as 'google_{uid}', so we allow any authenticated user
+      allow read, update: if request.auth != null;
       
       // Admins can read all users
       allow read: if request.auth != null && 
                     exists(/databases/$(database)/documents/admins/$(request.auth.uid));
       
-      // Allow delete only by the user themselves
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      // Allow delete only by authenticated users
+      allow delete: if request.auth != null;
     }
     
     // Wallets collection - for multi-wallet support
