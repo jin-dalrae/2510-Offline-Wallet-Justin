@@ -11,6 +11,8 @@ interface SignInProps {
     onSignUp?: () => void;
 }
 
+type WalletSource = 'generic' | 'coinbase' | 'metamask' | 'rainbow';
+
 export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) {
     const [mode, setMode] = useState<'password' | 'key'>('password');
     const [password, setPassword] = useState('');
@@ -18,6 +20,7 @@ export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) 
     const [importPassword, setImportPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [hasLocalWallet, setHasLocalWallet] = useState<boolean | null>(null);
+    const [walletSource, setWalletSource] = useState<WalletSource>('generic');
 
     useEffect(() => {
         storage.init()
@@ -194,6 +197,18 @@ export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) 
                 ) : (
                     <div className="space-y-5">
                         <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Where is this wallet coming from?</label>
+                            <div className="grid grid-cols-4 gap-2 p-1 bg-slate-100 rounded-xl">
+                                <WalletSourceTab source="coinbase" active={walletSource} onSelect={setWalletSource} label="Coinbase" />
+                                <WalletSourceTab source="metamask" active={walletSource} onSelect={setWalletSource} label="MetaMask" />
+                                <WalletSourceTab source="rainbow" active={walletSource} onSelect={setWalletSource} label="Rainbow" />
+                                <WalletSourceTab source="generic" active={walletSource} onSelect={setWalletSource} label="Other" />
+                            </div>
+                        </div>
+
+                        <WalletSourceInstructions source={walletSource} />
+
+                        <div>
                             <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Recovery Phrase or Private Key</label>
                             <textarea
                                 value={privateKey}
@@ -202,6 +217,9 @@ export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) 
                                 placeholder="Enter your 12-word phrase or 0x... private key"
                                 disabled={isLoading}
                             />
+                            <p className="text-xs text-slate-500 mt-2 ml-1">
+                                Your phrase is encrypted on this device with the password below. We never send it anywhere.
+                            </p>
                         </div>
 
                         <div>
@@ -244,6 +262,82 @@ export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) 
                     </div>
                 )}
             </div>
+        </div>
+    );
+}
+
+interface WalletSourceTabProps {
+    source: WalletSource;
+    active: WalletSource;
+    onSelect: (s: WalletSource) => void;
+    label: string;
+}
+
+function WalletSourceTab({ source, active, onSelect, label }: WalletSourceTabProps) {
+    const isActive = active === source;
+    return (
+        <button
+            onClick={() => onSelect(source)}
+            className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                isActive
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+            }`}
+        >
+            {label}
+        </button>
+    );
+}
+
+function WalletSourceInstructions({ source }: { source: WalletSource }) {
+    const content: Record<WalletSource, { title: string; steps: string[]; warning?: string }> = {
+        coinbase: {
+            title: 'Find your phrase in Coinbase Wallet',
+            steps: [
+                'Open the Coinbase Wallet app',
+                'Tap your profile → Settings',
+                'Tap Recovery Phrase, then Show Recovery Phrase',
+                'Authenticate with Face ID, then copy the 12 words',
+            ],
+        },
+        metamask: {
+            title: 'Find your phrase in MetaMask',
+            steps: [
+                'Open MetaMask',
+                'Tap the menu (☰) → Settings → Security & Privacy',
+                'Tap Reveal Secret Recovery Phrase',
+                'Enter your password, then copy the 12 words',
+            ],
+        },
+        rainbow: {
+            title: 'Find your phrase in Rainbow',
+            steps: [
+                'Open Rainbow',
+                'Tap the profile icon, then Settings → Backup',
+                'Tap Manual Backup',
+                'Authenticate, then copy the 12 words',
+            ],
+        },
+        generic: {
+            title: 'Bring your own recovery phrase',
+            steps: [
+                'Any BIP-39 12 or 24-word phrase works',
+                'Or paste a raw 0x-prefixed private key',
+                'Make sure no one is looking at your screen',
+            ],
+        },
+    };
+    const { title, steps, warning } = content[source];
+
+    return (
+        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2">
+            <p className="text-sm font-bold text-slate-900">{title}</p>
+            <ol className="text-sm text-slate-600 space-y-1 list-decimal list-inside">
+                {steps.map((s, i) => (
+                    <li key={i}>{s}</li>
+                ))}
+            </ol>
+            {warning && <p className="text-xs text-amber-700">{warning}</p>}
         </div>
     );
 }
