@@ -225,26 +225,33 @@ export class SettlementService {
             else if (symbol === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
             else tokenAddress = USDC_CONTRACT_ADDRESS;
 
-            // Look for matching on-chain transaction
-            // We search for recent transactions to 'me' from 'sender'
+            // Look for matching on-chain transaction.
             const recentTxs = await blockchain.getRecentERC20Transactions(
                 tokenAddress,
                 mainWallet.address,
-                20 // Check last 20
+                20
             );
 
-            // Match logic: Same sender, same amount, roughly same time?
-            // Local timestamp might differ from chain timestamp considerably if queued.
-            // So mostly match From and Amount.
-            // Also ensure it's not already linked to another local tx? 
-            // (Deduplication prevents double counting in UI, but here we want to link status)
+            // Don't double-link to a chain tx that's already claimed by another local pending entry.
+            const allPending = await storage.getPendingTransactions();
+            const alreadyLinkedHashes = new Set(
+                allPending
+                    .filter(p => p.id !== tx.id && p.txHash)
+                    .map(p => p.txHash!.toLowerCase())
+            );
+
+            // Match logic: same sender + same amount + earliest unclaimed chain tx within
+            // the voucher's validity window. The voucher has a unique nonce, but the chain
+            // tx itself doesn't carry it — so we still match (sender, amount) and use the
+            // unclaimed-hash filter to prevent two pending vouchers grabbing the same on-chain tx.
+            const sameAmount = (a: string, b: string) =>
+                Math.abs(parseFloat(a) - parseFloat(b)) < 0.000001;
 
             const match = recentTxs.find(chainTx =>
                 chainTx.type === 'received' &&
                 chainTx.from.toLowerCase() === tx.from.toLowerCase() &&
-                // Compare amounts with small tolerance or exact string match?
-                // Both are strings. 
-                Math.abs(parseFloat(chainTx.amount) - parseFloat(tx.amount)) < 0.000001
+                sameAmount(chainTx.amount, tx.amount) &&
+                !alreadyLinkedHashes.has(chainTx.hash.toLowerCase())
             );
 
             if (match) {

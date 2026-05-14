@@ -1,123 +1,56 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { ethers } from 'ethers';
 import { firebase } from '../lib/firebase';
+import { storage } from '../lib/storage';
 
 interface SignInProps {
-    onComplete: (privateKey: string) => void;
+    onPassword: (password: string) => Promise<void>;
+    onImport: (keyOrMnemonic: string, password: string) => Promise<void>;
     onBack: () => void;
     onSignUp?: () => void;
 }
 
-export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
+export function SignIn({ onPassword, onImport, onBack, onSignUp }: SignInProps) {
     const [mode, setMode] = useState<'password' | 'key'>('password');
-    const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [privateKey, setPrivateKey] = useState('');
+    const [importPassword, setImportPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [hasLocalWallet, setHasLocalWallet] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        storage.init()
+            .then(() => storage.getWallet())
+            .then((w) => setHasLocalWallet(!!w))
+            .catch(() => setHasLocalWallet(false));
+    }, []);
 
     const handlePasswordSignIn = async () => {
-        if (!username.trim() || !password) {
-            toast.error('Please enter username and password');
+        if (!password) {
+            toast.error('Please enter your password');
             return;
         }
-
         setIsLoading(true);
-        const usernameInput = username.trim().toLowerCase();
-
         try {
-            // Try local storage first (for local-only mode)
-            const { storage } = await import('../lib/storage');
-            await storage.init();
-            const localWallets = await storage.getAllWallets();
-
-            // Search by both accountName AND any stored username/identifier
-            const localWallet = localWallets.find(
-                w => w.accountName?.toLowerCase() === usernameInput ||
-                    w.address?.toLowerCase() === usernameInput
-            );
-
-            if (localWallet) {
-                try {
-                    const wallet = await ethers.Wallet.fromEncryptedJson(localWallet.encryptedPrivateKey, password);
-                    await storage.setActiveWallet(localWallet.id);
-                    onComplete(wallet.privateKey);
-                    toast.success('Welcome back!');
-                    return;
-                } catch (decryptError) {
-                    // Wrong password for local wallet
-                    toast.error('Incorrect password');
-                    setIsLoading(false);
-                    return;
-                }
-            }
-
-            // Try Firebase if local not found
-            if (firebase.isInitialized()) {
-                const user = await firebase.getUser(username);
-
-                if (!user) {
-                    toast.error('Account not found. Check your username or create a new account.');
-                    setIsLoading(false);
-                    return;
-                }
-
-                // Decrypt wallet
-                try {
-                    const wallet = await ethers.Wallet.fromEncryptedJson(user.encryptedWallet, password);
-
-                    // Save locally for future offline access
-                    try {
-                        const walletId = await storage.addWallet(
-                            wallet.address,
-                            user.encryptedWallet,
-                            user.accountName
-                        );
-                        await storage.setActiveWallet(walletId);
-                    } catch (e) {
-                        console.warn('Could not cache wallet locally:', e);
-                    }
-
-                    onComplete(wallet.privateKey);
-                    toast.success('Welcome back!');
-                } catch (decryptError) {
-                    toast.error('Incorrect password');
-                }
-            } else {
-                toast.error('Account not found locally. Connect to internet or create a new account.');
-            }
-        } catch (error) {
-            console.error('Sign in error:', error);
-            toast.error('Sign in failed. Please try again.');
+            await onPassword(password);
         } finally {
             setIsLoading(false);
         }
     };
 
-
     const handleKeySignIn = async () => {
         if (!privateKey.trim()) {
-            toast.error('Please enter your wallet key');
+            toast.error('Please enter your wallet key or recovery phrase');
             return;
         }
-
+        if (!importPassword) {
+            toast.error('Please choose a password to protect this wallet on this device');
+            return;
+        }
         setIsLoading(true);
-
         try {
-            // Try as mnemonic first
-            try {
-                const wallet = ethers.Wallet.fromPhrase(privateKey.trim());
-                onComplete(wallet.privateKey);
-                return;
-            } catch (e) {
-                // Not a mnemonic, try as private key
-            }
-
-            // Try as private key
-            new ethers.Wallet(privateKey.trim());
-            onComplete(privateKey.trim());
-        } catch (error) {
-            toast.error('Invalid wallet key or phrase');
+            await onImport(privateKey.trim(), importPassword);
         } finally {
             setIsLoading(false);
         }
@@ -125,32 +58,27 @@ export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
 
     const handleGoogleSignIn = async () => {
         setIsLoading(true);
-
         try {
-            // 1. Sign in with Google
             const userCredential = await firebase.signInWithGoogle();
             const googleUser = userCredential.user;
 
-            // 2. Check if user exists, if not create wallet
             const userId = `google_${googleUser.uid}`;
             const existingUser = await firebase.getUser(userId);
 
             if (existingUser) {
-                // Existing user - decrypt wallet with Google UID as password
+                // Decrypt with Google UID, then import using UID as the device password.
                 const wallet = await ethers.Wallet.fromEncryptedJson(
                     existingUser.encryptedWallet,
                     googleUser.uid
                 );
-                onComplete(wallet.privateKey);
+                await onImport(wallet.privateKey, googleUser.uid);
                 toast.success('Welcome back!');
             } else {
-                // New user - create wallet and encrypt with Google UID
+                // New: mint a wallet and persist via the import path.
                 const newWallet = ethers.Wallet.createRandom();
                 const encryptedWallet = await newWallet.encrypt(googleUser.uid);
-
                 await firebase.getOrCreateGoogleUser(googleUser, encryptedWallet);
-
-                onComplete(newWallet.privateKey);
+                await onImport(newWallet.privateKey, googleUser.uid);
                 toast.success('Account created with Google!');
             }
         } catch (error: any) {
@@ -207,17 +135,11 @@ export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
 
                 {mode === 'password' ? (
                     <div className="space-y-5">
-                        <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Username</label>
-                            <input
-                                type="text"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-lg placeholder:text-slate-300"
-                                placeholder="Your username"
-                                disabled={isLoading}
-                            />
-                        </div>
+                        {hasLocalWallet === false && (
+                            <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-sm">
+                                No wallet found on this device. Use "I want to use my recovery phrase instead" below to import one, or create a new account.
+                            </div>
+                        )}
 
                         <div>
                             <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">Password</label>
@@ -227,13 +149,14 @@ export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
                                 onChange={(e) => setPassword(e.target.value)}
                                 className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-lg placeholder:text-slate-300"
                                 placeholder="Your password"
-                                disabled={isLoading}
+                                disabled={isLoading || hasLocalWallet === false}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handlePasswordSignIn(); }}
                             />
                         </div>
 
                         <button
                             onClick={handlePasswordSignIn}
-                            disabled={isLoading}
+                            disabled={isLoading || hasLocalWallet === false}
                             className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                         >
                             {isLoading ? (
@@ -276,7 +199,21 @@ export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
                                 value={privateKey}
                                 onChange={(e) => setPrivateKey(e.target.value)}
                                 className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-sm font-mono min-h-[120px] placeholder:text-slate-300"
-                                placeholder="Enter your 12-word phrase..."
+                                placeholder="Enter your 12-word phrase or 0x... private key"
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">
+                                New Password <span className="font-normal text-slate-500">(protects this wallet on this device)</span>
+                            </label>
+                            <input
+                                type="password"
+                                value={importPassword}
+                                onChange={(e) => setImportPassword(e.target.value)}
+                                className="w-full p-4 rounded-2xl bg-white border-2 border-slate-100 focus:border-slate-900 focus:ring-0 outline-none transition-all font-medium text-lg placeholder:text-slate-300"
+                                placeholder="Choose a password"
                                 disabled={isLoading}
                             />
                         </div>
@@ -301,7 +238,7 @@ export function SignIn({ onComplete, onBack, onSignUp }: SignInProps) {
                                 onClick={() => setMode('password')}
                                 className="text-slate-500 hover:text-slate-900 text-sm font-medium underline"
                             >
-                                Back to Username/Password
+                                Back to Password
                             </button>
                         </div>
                     </div>

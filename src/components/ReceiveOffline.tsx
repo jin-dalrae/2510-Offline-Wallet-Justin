@@ -85,7 +85,6 @@ export function ReceiveOffline({
             setSenderAddress(voucherData.from);
             setStep('complete');
             toast.success('Voucher received!');
-            toast.success('Voucher received!');
         } catch (err) {
             // Only show toast if it's a new error or sufficient time passed?
             // For now, just show it. The dedupe above handles rapid fire of SAME code.

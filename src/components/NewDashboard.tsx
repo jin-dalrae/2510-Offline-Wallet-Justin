@@ -79,12 +79,9 @@ export function NewDashboard({
         }
     }, [address, offlineAllowanceLimit, offlineSpent]);
 
-    // Reset offline spent when going back online
-    useEffect(() => {
-        if (isOnline) {
-            setOfflineSpent(0);
-        }
-    }, [isOnline]);
+    // Note: offlineSpent is not reset on network transitions.
+    // It tracks unsettled offline payments and is cleared only when the user
+    // explicitly adjusts the offline limit, or after settlement completes.
 
     // Listen for changes to offline allowance from other components
     useEffect(() => {

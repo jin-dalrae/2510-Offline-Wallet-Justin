@@ -101,27 +101,38 @@ function App() {
                 toast.error(`${failed.length} transaction(s) failed to settle`);
             }
         }
-    }, [settlement.isSettling, settlement.progress, settlement.lastResults]);
+    }, [settlement.isSettling, settlement.progress, settlement.lastResults, refreshBalance]);
 
-    const handleSignUp = async (accountName: string, privateKey: string) => {
+    const handleSignUp = async (accountName: string, privateKey: string, password: string) => {
         try {
-            await wallet.createWallet(accountName, privateKey);
+            await wallet.createWallet(accountName, privateKey, password);
             toast.success('Account created!');
             navigate('/dashboard');
         } catch (error) {
             console.error('Sign up error:', error);
-            toast.error('Failed to create account');
+            toast.error((error as Error).message || 'Failed to create account');
         }
     };
 
-    const handleSignIn = async (privateKey: string) => {
+    const handleSignInWithPassword = async (password: string) => {
         try {
-            await wallet.loginWithKey(privateKey);
+            await wallet.unlockWithPassword(password);
             toast.success('Welcome back!');
             navigate('/dashboard');
         } catch (error) {
             console.error('Sign in error:', error);
-            toast.error('Failed to sign in');
+            toast.error((error as Error).message || 'Incorrect password');
+        }
+    };
+
+    const handleImport = async (keyOrMnemonic: string, password: string) => {
+        try {
+            await wallet.importWallet(keyOrMnemonic, password);
+            toast.success('Wallet imported!');
+            navigate('/dashboard');
+        } catch (error) {
+            console.error('Import error:', error);
+            toast.error((error as Error).message || 'Failed to import wallet');
         }
     };
 
@@ -186,7 +197,8 @@ function App() {
                     path="/signin"
                     element={
                         <SignIn
-                            onComplete={handleSignIn}
+                            onPassword={handleSignInWithPassword}
+                            onImport={handleImport}
                             onBack={() => navigate('/')}
                             onSignUp={() => navigate('/signup')}
                         />

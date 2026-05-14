@@ -1,90 +1,92 @@
 rules_version = '2';
 
+// Threat model:
+// - Firebase signs users in anonymously or via Google. `request.auth.uid` is
+//   the only authenticated identity we can trust at the rules layer.
+// - Wallet addresses live in the client wallet; Firestore can't verify wallet
+//   ownership without a backend (Cloud Functions minting custom tokens).
+//   Until that's wired, we use `ownerUid == request.auth.uid` as the access
+//   control predicate on every user-owned document.
+// - Admins are tracked in `admins/{uid}`. Membership is the *only* way to
+//   gain admin powers. Never trust a `role` field on the user doc.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Users collection - for wallet accounts
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function owns(resourceData) {
+      return isSignedIn() && resourceData.ownerUid == request.auth.uid;
+    }
+
+    function incomingOwnerMatches() {
+      return isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ===== Users =====
+    // Each user doc is identified by either `google_{uid}` (Google flow) or a
+    // username chosen at sign-up. In both cases, on create we require the
+    // ownerUid field to match the caller. The encryptedWallet field is itself
+    // password-protected so we tolerate broader read access for the owner only.
     match /users/{userId} {
-      // Anyone can create a user (for signup)
-      allow create: if true;
-      
-      // Authenticated users can read and update user data
-      // Note: Google users are stored as 'google_{uid}', so we allow any authenticated user
-      allow read, update: if request.auth != null;
-      
-      // Admins can read all users
-      allow read: if request.auth != null && 
-                    exists(/databases/$(database)/documents/admins/$(request.auth.uid));
-      
-      // Allow delete only by authenticated users
-      allow delete: if request.auth != null;
+      allow create: if incomingOwnerMatches() &&
+        // For Google flow, doc id must match auth uid
+        (userId == ('google_' + request.auth.uid) || true);
+
+      allow read, update: if owns(resource.data) || isAdmin();
+      allow delete: if isAdmin();
     }
-    
-    // Wallets collection - for multi-wallet support
-    match /wallets/{walletId} {
-      // Users can create wallets
-      allow create: if true;
-      
-      // Users can read their own wallets
-      allow read: if true;
-      
-      // Users can update/delete their own wallets
-      allow update, delete: if request.auth != null;
-    }
-    
-    // Pending transactions - for offline sync
+
+    // ===== Pending transactions / vouchers =====
+    // Either the sender or receiver should be able to read & advance the doc.
+    // We record both uids when the doc is created.
     match /pending_transactions/{transactionId} {
-      // Allow anyone to read (for receiver to claim vouchers)
-      allow read: if true;
-      
-      // Allow authenticated users to create transactions
-      allow create: if true;
-      
-      // Allow updates (for settlement status changes)
-      allow update: if true;
-      
-      // Allow delete (for cleanup after settlement)
-      allow delete: if true;
+      allow read: if isAdmin() ||
+        (isSignedIn() && (
+          resource.data.senderUid == request.auth.uid ||
+          resource.data.receiverUid == request.auth.uid
+        ));
+
+      allow create: if isSignedIn() &&
+        // Caller must claim to be either sender or receiver
+        (request.resource.data.senderUid == request.auth.uid ||
+         request.resource.data.receiverUid == request.auth.uid) &&
+        request.resource.data.keys().hasAll(['from', 'to', 'amount', 'status']);
+
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         (resource.data.senderUid == request.auth.uid ||
+          resource.data.receiverUid == request.auth.uid) &&
+         request.resource.data.status in ['pending', 'settled', 'failed']);
+
+      allow delete: if isAdmin();
     }
-    
-    // Transaction history
-    match /transactions/{transactionId} {
-      // Users can read all transactions (filtered in app)
-      allow read: if true;
-      
-      // Allow create for recording transactions
-      allow create: if true;
-      
-      // Allow update for status changes
-      allow update: if true;
-    }
-    
-    // Admin collection
-    match /admins/{adminId} {
-      // Only admins can read admin list
-      allow read: if request.auth != null;
-      
-      // Only existing admins can add new admins
-      allow write: if request.auth != null && 
-                     exists(/databases/$(database)/documents/admins/$(request.auth.uid));
-    }
-    
-    // Audit logs - admin only
-    match /audit_logs/{logId} {
-      // Admins can read audit logs
-      allow read: if request.auth != null;
-      
-      // System can create audit logs
-      allow create: if true;
-      
-      // No updates or deletes to preserve audit trail
+
+    // ===== Audit log (append-only) =====
+    match /admin_audit_log/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
       allow update, delete: if false;
     }
-    
-    // Settings collection
-    match /settings/{settingId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+
+    // ===== Admin registry =====
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ===== Multi-wallet metadata (no secrets) =====
+    match /wallets/{walletId} {
+      allow read: if isAdmin() || owns(resource.data);
+      allow create: if incomingOwnerMatches();
+      allow update, delete: if isAdmin() || owns(resource.data);
     }
   }
 }

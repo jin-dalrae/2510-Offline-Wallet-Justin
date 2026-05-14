@@ -1,7 +1,5 @@
 import { firebase } from './firebase';
 import { storage } from './storage';
-import { blockchain } from './blockchain';
-import { ethers } from 'ethers';
 import toast from 'react-hot-toast';
 
 class AdminActionsService {
@@ -43,49 +41,35 @@ class AdminActionsService {
   }
 
   /**
-   * Force settlement of a pending transaction
+   * Administratively mark a transaction as settled.
+   *
+   * NOTE: This does NOT broadcast a chain transaction — admin doesn't hold
+   * the sender's signing key. It only updates bookkeeping and records the
+   * intervention in the audit log. Use only when the on-chain transfer has
+   * actually happened (verifiable on the explorer) but the app failed to
+   * detect it (e.g. RPC issues during settlement matching).
    */
   async forceSettlement(
     transactionId: string,
-    adminId: string
+    adminId: string,
+    knownTxHash?: string
   ): Promise<{ success: boolean; txHash?: string; error?: string }> {
     try {
-      // Get transaction details
       const tx = await storage.getPendingTransaction(transactionId);
-      if (!tx) {
-        throw new Error('Transaction not found');
-      }
+      if (!tx) throw new Error('Transaction not found');
+      if (tx.status === 'settled') throw new Error('Already settled');
 
-      if (tx.status !== 'pending') {
-        throw new Error('Transaction is not pending');
-      }
-
-      if (!tx.voucherData) {
-        throw new Error('No voucher data found');
-      }
-
-      // Import the voucher wallet
-      const voucherWallet = new ethers.Wallet(tx.voucherData.privateKey, blockchain.getProvider());
-
-      // Transfer USDC from voucher wallet to recipient
-      const txResponse = await blockchain.transferUSDC(
-        voucherWallet,
-        tx.to,
-        tx.amount
-      );
-
-      const txHash = txResponse.hash;
-
-      // Update transaction status
       await storage.updatePendingTransaction(transactionId, {
         status: 'settled',
-        txHash,
+        ...(knownTxHash && { txHash: knownTxHash }),
       });
 
-      // Update Firebase
-      await firebase.markAsSettled(transactionId, txHash);
+      if (knownTxHash) {
+        await firebase.markAsSettled(transactionId, knownTxHash);
+      } else {
+        await firebase.updateTransaction(transactionId, { status: 'settled' });
+      }
 
-      // Log admin action
       await firebase.logAdminAction({
         adminId,
         adminUsername: adminId,
@@ -93,15 +77,16 @@ class AdminActionsService {
         targetType: 'transaction',
         targetId: transactionId,
         details: {
-          txHash,
+          knownTxHash,
           amount: tx.amount,
           from: tx.from,
           to: tx.to,
+          note: 'Admin override; no chain broadcast.',
         },
       });
 
-      toast.success('Transaction settled successfully');
-      return { success: true, txHash };
+      toast.success('Transaction marked as settled');
+      return { success: true, txHash: knownTxHash };
     } catch (error) {
       const errorMsg = (error as Error).message;
       toast.error(`Failed to settle transaction: ${errorMsg}`);
@@ -110,71 +95,33 @@ class AdminActionsService {
   }
 
   /**
-   * Retry a failed transaction
+   * Re-queue a stuck transaction by flipping it back to 'pending', so the
+   * normal settlement loop picks it up again. Cannot broadcast directly —
+   * admin doesn't have the sender's key.
    */
   async retryTransaction(
     transactionId: string,
-    adminId: string,
-    adjustGas = false
-  ): Promise<{ success: boolean; txHash?: string; error?: string }> {
+    adminId: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
-      // Get transaction details
       const tx = await storage.getPendingTransaction(transactionId);
-      if (!tx) {
-        throw new Error('Transaction not found');
-      }
+      if (!tx) throw new Error('Transaction not found');
+      if (tx.status === 'settled') throw new Error('Transaction already settled');
 
-      if (tx.status === 'settled') {
-        throw new Error('Transaction already settled');
-      }
+      await storage.updatePendingTransaction(transactionId, { status: 'pending' });
+      await firebase.updateTransaction(transactionId, { status: 'pending' });
 
-      if (!tx.voucherData) {
-        throw new Error('No voucher data found');
-      }
-
-      // Import the voucher wallet
-      const voucherWallet = new ethers.Wallet(tx.voucherData.privateKey, blockchain.getProvider());
-
-      // Check if voucher wallet has USDC balance
-      const balance = await blockchain.getUSDCBalance(voucherWallet.address);
-      if (parseFloat(balance) < parseFloat(tx.amount)) {
-        throw new Error('Insufficient voucher balance');
-      }
-
-      // Retry with potentially higher gas
-      const txResponse = await blockchain.transferUSDC(
-        voucherWallet,
-        tx.to,
-        tx.amount
-      );
-
-      const txHash = txResponse.hash;
-
-      // Update transaction status
-      await storage.updatePendingTransaction(transactionId, {
-        status: 'settled',
-        txHash,
-      });
-
-      // Update Firebase
-      await firebase.markAsSettled(transactionId, txHash);
-
-      // Log admin action
       await firebase.logAdminAction({
         adminId,
         adminUsername: adminId,
         action: 'retry_transaction',
         targetType: 'transaction',
         targetId: transactionId,
-        details: {
-          txHash,
-          adjustedGas: adjustGas,
-          amount: tx.amount,
-        },
+        details: { amount: tx.amount, note: 'Re-queued for settlement.' },
       });
 
-      toast.success('Transaction retried successfully');
-      return { success: true, txHash };
+      toast.success('Transaction re-queued for settlement');
+      return { success: true };
     } catch (error) {
       const errorMsg = (error as Error).message;
       toast.error(`Failed to retry transaction: ${errorMsg}`);

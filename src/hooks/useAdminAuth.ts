@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { firebase } from '../lib/firebase';
 import { AdminSession } from '../types/admin';
 
@@ -17,11 +17,7 @@ export function useAdminAuth(username?: string) {
     error: null,
   });
 
-  useEffect(() => {
-    checkAdminStatus();
-  }, [username]);
-
-  const checkAdminStatus = async () => {
+  const checkAdminStatus = useCallback(async () => {
     if (!username) {
       setState({
         isAdmin: false,
@@ -75,7 +71,11 @@ export function useAdminAuth(username?: string) {
         error: (error as Error).message,
       });
     }
-  };
+  }, [username]);
+
+  useEffect(() => {
+    checkAdminStatus();
+  }, [checkAdminStatus]);
 
   const createAdminSession = async (username: string): Promise<AdminSession> => {
     const session: AdminSession = {

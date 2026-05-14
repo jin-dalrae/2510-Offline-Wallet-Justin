@@ -4,7 +4,7 @@ import { firebase } from '../lib/firebase';
 import toast from 'react-hot-toast';
 
 interface SignUpProps {
-    onComplete: (accountName: string, privateKey: string) => void;
+    onComplete: (accountName: string, privateKey: string, password: string) => void;
     onBack: () => void;
     onPrivacy: () => void;
 }
@@ -42,35 +42,21 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
         setIsLoading(true);
 
         try {
-            // 1. Create random wallet
+            // Generate a new wallet. useWallet.createWallet handles encryption + local storage.
             const wallet = ethers.Wallet.createRandom();
 
-            // 2. Encrypt private key with password
-            const encryptedJson = await wallet.encrypt(password);
-
-            // 3. Save locally first (this always works)
-            const { storage } = await import('../lib/storage');
-            await storage.init();
-            const walletId = await storage.addWallet(
-                wallet.address,
-                encryptedJson,
-                accountName.trim()
-            );
-            await storage.setActiveWallet(walletId);
-
-            // 4. Try to save to Firebase (optional - for cloud sync)
+            // Optional: also stash an encrypted copy in Firebase so the user can recover
+            // from another device with the same password.
             try {
                 if (firebase.isInitialized()) {
+                    const encryptedJson = await wallet.encrypt(password);
                     await firebase.createUser(username, encryptedJson, accountName);
                 }
             } catch (firebaseError) {
                 console.warn('Firebase sync failed (continuing in local-only mode):', firebaseError);
-                // Don't block signup - wallet is saved locally
             }
 
-            // 5. Complete
-            toast.success('Wallet created successfully!');
-            onComplete(accountName, wallet.privateKey);
+            onComplete(accountName.trim(), wallet.privateKey, password);
         } catch (error: any) {
             console.error('Signup error:', error);
             toast.error(error.message || 'Failed to create account');
@@ -99,8 +85,8 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
             // 3. Save to Firebase
             const result = await firebase.getOrCreateGoogleUser(googleUser, encryptedWallet);
 
-            // 4. Complete
-            onComplete(result.accountName, wallet.privateKey);
+            // 4. Complete. Google UID serves as the encryption password on this device.
+            onComplete(result.accountName, wallet.privateKey, googleUser.uid);
 
             if (result.isNewUser) {
                 toast.success('Account created with Google!');

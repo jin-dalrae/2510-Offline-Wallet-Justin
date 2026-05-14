@@ -3,9 +3,13 @@ import { WalletManager } from '../lib/wallet';
 import { storage } from '../lib/storage';
 import { ethers } from 'ethers';
 
-// Session keys for cross-tab sync
-const SESSION_KEY = 'wallet_session_active';
-const SESSION_TIMESTAMP_KEY = 'wallet_session_timestamp';
+// sessionStorage holds the password for the current tab session only.
+// It clears automatically when the tab is closed. This is the auto-unlock
+// mechanism on reload — never a hardcoded fallback.
+const SESSION_PASSWORD_KEY = 'wallet_session_password';
+// localStorage signal so other tabs in the same browser session can notice
+// login/logout. Does NOT contain credentials.
+const SESSION_FLAG_KEY = 'wallet_session_active';
 
 export interface WalletState {
     isInitialized: boolean;
@@ -16,230 +20,174 @@ export interface WalletState {
     walletManager: WalletManager | null;
 }
 
-export function useWallet() {
-    const [state, setState] = useState<WalletState>({
-        isInitialized: false,
-        isUnlocked: false,
-        address: null,
-        accountName: null,
-        profilePicture: null,
-        walletManager: null,
-    });
+const INITIAL_STATE: WalletState = {
+    isInitialized: false,
+    isUnlocked: false,
+    address: null,
+    accountName: null,
+    profilePicture: null,
+    walletManager: null,
+};
 
-    // Track if we've already auto-unlocked to prevent loops
+export function useWallet() {
+    const [state, setState] = useState<WalletState>(INITIAL_STATE);
     const hasAutoUnlocked = useRef(false);
 
-    // Check if wallet exists and auto-unlock if session is active
-    useEffect(() => {
-        const checkWallet = async () => {
-            try {
-                await storage.init();
-                const walletData = await storage.getWallet();
-
-                if (walletData) {
-                    // Check if there's an active session from another tab
-                    const sessionActive = localStorage.getItem(SESSION_KEY) === 'true';
-                    
-                    if (sessionActive && !hasAutoUnlocked.current) {
-                        // Auto-unlock the wallet since session is active
-                        hasAutoUnlocked.current = true;
-                        const defaultPassword = 'default-password-for-demo';
-                        try {
-                            const walletManager = new WalletManager();
-                            await walletManager.unlock(walletData.encryptedPrivateKey, defaultPassword);
-                            
-                            setState({
-                                isInitialized: true,
-                                isUnlocked: true,
-                                address: walletData.address,
-                                accountName: walletData.accountName || 'My Wallet',
-                                profilePicture: walletData.profilePicture || null,
-                                walletManager,
-                            });
-                        } catch (unlockError) {
-                            console.error('Failed to auto-unlock wallet:', unlockError);
-                            // Clear invalid session
-                            localStorage.removeItem(SESSION_KEY);
-                            setState({
-                                isInitialized: true,
-                                isUnlocked: false,
-                                address: walletData.address,
-                                accountName: walletData.accountName || 'My Wallet',
-                                profilePicture: walletData.profilePicture || null,
-                                walletManager: null,
-                            });
-                        }
-                    } else {
-                        setState({
-                            isInitialized: true,
-                            isUnlocked: false,
-                            address: walletData.address,
-                            accountName: walletData.accountName || 'My Wallet',
-                            profilePicture: walletData.profilePicture || null,
-                            walletManager: null,
-                        });
-                    }
-                }
-            } catch (error) {
-                console.error('Error checking wallet:', error);
-            }
-        };
-
-        checkWallet();
-    }, []);
-
-    // Listen for session changes from other tabs
-    useEffect(() => {
-        const handleStorageChange = async (event: StorageEvent) => {
-            if (event.key === SESSION_KEY) {
-                if (event.newValue === 'true' && !state.isUnlocked) {
-                    // Another tab logged in, auto-unlock this tab
-                    try {
-                        await storage.init();
-                        const walletData = await storage.getWallet();
-                        if (walletData) {
-                            const defaultPassword = 'default-password-for-demo';
-                            const walletManager = new WalletManager();
-                            await walletManager.unlock(walletData.encryptedPrivateKey, defaultPassword);
-                            
-                            setState({
-                                isInitialized: true,
-                                isUnlocked: true,
-                                address: walletData.address,
-                                accountName: walletData.accountName || 'My Wallet',
-                                profilePicture: walletData.profilePicture || null,
-                                walletManager,
-                            });
-                        }
-                    } catch (error) {
-                        console.error('Failed to sync session from other tab:', error);
-                    }
-                } else if (event.newValue === null && state.isUnlocked) {
-                    // Another tab logged out, lock this tab too
-                    if (state.walletManager) {
-                        state.walletManager.lock();
-                    }
-                    setState(prev => ({
-                        ...prev,
-                        isUnlocked: false,
-                        walletManager: null
-                    }));
-                }
-            }
-        };
-
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
-    }, [state.isUnlocked, state.walletManager]);
-
-    const createWallet = useCallback(
-        async (accountName: string, privateKey: string): Promise<void> => {
-            // For this simplified flow, we'll use a default password since the user
-            // wants to "sign in with keys" rather than a password.
-            // In a real app, we'd want a user-provided password.
-            const defaultPassword = 'default-password-for-demo';
-
-            const wallet = WalletManager.fromPrivateKey(privateKey);
-            const encryptedPrivateKey = await WalletManager.encryptPrivateKey(
-                privateKey,
-                defaultPassword
-            );
-
-            await storage.saveWallet(wallet.address, encryptedPrivateKey, accountName);
-
-            const walletManager = new WalletManager();
-            await walletManager.unlock(encryptedPrivateKey, defaultPassword);
-
-            // Set session active in localStorage for cross-tab sync
-            localStorage.setItem(SESSION_KEY, 'true');
-            localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-
+    const applyUnlocked = useCallback(
+        (
+            walletData: { address: string; accountName?: string; profilePicture?: string },
+            walletManager: WalletManager
+        ) => {
             setState({
                 isInitialized: true,
                 isUnlocked: true,
-                address: wallet.address,
-                accountName,
-                profilePicture: null,
+                address: walletData.address,
+                accountName: walletData.accountName ?? 'My Wallet',
+                profilePicture: walletData.profilePicture ?? null,
                 walletManager,
             });
         },
         []
     );
 
-    const loginWithKey = useCallback(
-        async (keyOrMnemonic: string): Promise<void> => {
-            const defaultPassword = 'default-password-for-demo';
-            let wallet;
+    // On mount: load wallet metadata; auto-unlock if a session password exists.
+    useEffect(() => {
+        let cancelled = false;
 
-            // Check if input is mnemonic (has spaces) or private key
-            if (keyOrMnemonic.includes(' ')) {
-                wallet = WalletManager.fromMnemonic(keyOrMnemonic);
-            } else {
-                wallet = WalletManager.fromPrivateKey(keyOrMnemonic);
+        const init = async () => {
+            try {
+                await storage.init();
+                const walletData = await storage.getWallet();
+
+                if (!walletData) {
+                    if (!cancelled) {
+                        setState({ ...INITIAL_STATE, isInitialized: true });
+                    }
+                    return;
+                }
+
+                const sessionPassword = sessionStorage.getItem(SESSION_PASSWORD_KEY);
+                if (sessionPassword && !hasAutoUnlocked.current) {
+                    hasAutoUnlocked.current = true;
+                    try {
+                        const wm = new WalletManager();
+                        await wm.unlock(walletData.encryptedPrivateKey, sessionPassword);
+                        if (!cancelled) applyUnlocked(walletData, wm);
+                        return;
+                    } catch (err) {
+                        console.warn('Auto-unlock failed, clearing session', err);
+                        sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+                        localStorage.removeItem(SESSION_FLAG_KEY);
+                    }
+                }
+
+                if (!cancelled) {
+                    setState({
+                        isInitialized: true,
+                        isUnlocked: false,
+                        address: walletData.address,
+                        accountName: walletData.accountName ?? 'My Wallet',
+                        profilePicture: walletData.profilePicture ?? null,
+                        walletManager: null,
+                    });
+                }
+            } catch (error) {
+                console.error('Error checking wallet:', error);
+                if (!cancelled) setState({ ...INITIAL_STATE, isInitialized: true });
             }
+        };
 
-            // Check if this matches stored wallet, if so just unlock
-            const storedWallet = await storage.getWallet();
+        init();
+        return () => {
+            cancelled = true;
+        };
+    }, [applyUnlocked]);
 
-            if (storedWallet && storedWallet.address === wallet.address) {
-                const walletManager = new WalletManager();
-                await walletManager.unlock(storedWallet.encryptedPrivateKey, defaultPassword);
-
-                // Set session active in localStorage for cross-tab sync
-                localStorage.setItem(SESSION_KEY, 'true');
-                localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-
-                setState({
-                    isInitialized: true,
-                    isUnlocked: true,
-                    address: wallet.address,
-                    accountName: storedWallet.accountName || 'My Wallet',
-                    profilePicture: storedWallet.profilePicture || null,
-                    walletManager,
-                });
-            } else {
-                // New login
-                const encryptedPrivateKey = await WalletManager.encryptPrivateKey(
-                    wallet.privateKey,
-                    defaultPassword
-                );
-
-                const accountName = 'Imported Wallet';
-                await storage.saveWallet(wallet.address, encryptedPrivateKey, accountName);
-
-                const walletManager = new WalletManager();
-                await walletManager.unlock(encryptedPrivateKey, defaultPassword);
-
-                // Set session active in localStorage for cross-tab sync
-                localStorage.setItem(SESSION_KEY, 'true');
-                localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
-
-                setState({
-                    isInitialized: true,
-                    isUnlocked: true,
-                    address: wallet.address,
-                    accountName,
-                    profilePicture: null,
-                    walletManager,
-                });
+    // Cross-tab logout: if another tab clears the session flag, lock this tab too.
+    useEffect(() => {
+        const handleStorage = (event: StorageEvent) => {
+            if (event.key === SESSION_FLAG_KEY && event.newValue === null) {
+                state.walletManager?.lock();
+                sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+                setState((prev) => ({ ...prev, isUnlocked: false, walletManager: null }));
             }
+        };
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+    }, [state.walletManager]);
+
+    /**
+     * Create a brand-new wallet entry from a private key, encrypted with the user's password.
+     * Replaces any existing wallet on the device.
+     */
+    const createWallet = useCallback(
+        async (accountName: string, privateKey: string, password: string): Promise<void> => {
+            if (!password) throw new Error('Password is required');
+
+            const wallet = WalletManager.fromPrivateKey(privateKey);
+            const encryptedPrivateKey = await WalletManager.encryptPrivateKey(privateKey, password);
+
+            // Reset any prior wallet on this device so there's exactly one record.
+            await storage.deleteActiveWallet();
+            const walletId = await storage.addWallet(wallet.address, encryptedPrivateKey, accountName);
+            await storage.setActiveWallet(walletId);
+
+            const wm = new WalletManager();
+            await wm.unlock(encryptedPrivateKey, password);
+
+            sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+            localStorage.setItem(SESSION_FLAG_KEY, 'true');
+
+            applyUnlocked(
+                { address: wallet.address, accountName, profilePicture: undefined },
+                wm
+            );
         },
-        []
+        [applyUnlocked]
+    );
+
+    /**
+     * Sign in with a stored wallet (decrypt with the provided password).
+     */
+    const unlockWithPassword = useCallback(
+        async (password: string): Promise<void> => {
+            if (!password) throw new Error('Password is required');
+            const walletData = await storage.getWallet();
+            if (!walletData) throw new Error('No wallet on this device');
+
+            const wm = new WalletManager();
+            await wm.unlock(walletData.encryptedPrivateKey, password);
+
+            sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+            localStorage.setItem(SESSION_FLAG_KEY, 'true');
+
+            applyUnlocked(walletData, wm);
+        },
+        [applyUnlocked]
+    );
+
+    /**
+     * Import a wallet from private key or mnemonic + a new password.
+     * The password is what will be used to unlock the wallet on this device going forward.
+     */
+    const importWallet = useCallback(
+        async (keyOrMnemonic: string, password: string, accountName = 'Imported Wallet'): Promise<void> => {
+            if (!password) throw new Error('Password is required');
+
+            const wallet = keyOrMnemonic.trim().includes(' ')
+                ? WalletManager.fromMnemonic(keyOrMnemonic.trim())
+                : WalletManager.fromPrivateKey(keyOrMnemonic.trim());
+
+            await createWallet(accountName, wallet.privateKey, password);
+        },
+        [createWallet]
     );
 
     const logout = useCallback(() => {
-        if (state.walletManager) {
-            state.walletManager.lock();
-        }
-        // Clear session for cross-tab sync
-        localStorage.removeItem(SESSION_KEY);
-        localStorage.removeItem(SESSION_TIMESTAMP_KEY);
-        
-        setState(prev => ({
-            ...prev,
-            isUnlocked: false,
-            walletManager: null
-        }));
+        state.walletManager?.lock();
+        sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+        localStorage.removeItem(SESSION_FLAG_KEY);
+        setState((prev) => ({ ...prev, isUnlocked: false, walletManager: null }));
     }, [state.walletManager]);
 
     const getWallet = useCallback((): ethers.HDNodeWallet | ethers.Wallet => {
@@ -247,26 +195,25 @@ export function useWallet() {
             throw new Error('Wallet is locked');
         }
         return state.walletManager.getWallet();
-    }, [state]);
+    }, [state.walletManager, state.isUnlocked]);
 
-    const updateProfile = useCallback(async (name?: string, picture?: string | null) => {
-        try {
-            await storage.updateWalletProfile(name, picture === null ? null : picture || undefined);
-            setState(prev => ({
+    const updateProfile = useCallback(
+        async (name?: string, picture?: string | null) => {
+            await storage.updateWalletProfile(name, picture === null ? null : picture);
+            setState((prev) => ({
                 ...prev,
                 ...(name !== undefined && { accountName: name }),
-                ...(picture !== undefined && { profilePicture: picture }),
+                ...(picture !== undefined && { profilePicture: picture ?? null }),
             }));
-        } catch (error) {
-            console.error('Failed to update profile:', error);
-            throw error;
-        }
-    }, []);
+        },
+        []
+    );
 
     return {
         ...state,
         createWallet,
-        loginWithKey,
+        unlockWithPassword,
+        importWallet,
         logout,
         getWallet,
         updateProfile,

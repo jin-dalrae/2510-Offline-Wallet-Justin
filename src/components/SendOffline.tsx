@@ -138,15 +138,15 @@ export function SendOffline({
                     throw new Error('Insufficient ETH for gas fees');
                 }
 
-                // Send Transaction
+                // Broadcast transaction
                 const tx = await blockchain.transferERC20(
-                    wallet as any, // Cast to satisfy type if needed
+                    wallet as any,
                     tokenAddress,
                     toAddress,
                     amount
                 );
 
-                // Save pending transaction (so it shows in UI immediately)
+                // Record as pending while waiting for confirmation
                 const txId = uuidv4();
                 const deviceId = storage.getDeviceId();
 
@@ -157,13 +157,23 @@ export function SendOffline({
                     to: toAddress,
                     amount,
                     timestamp: Date.now(),
-                    status: 'settled', // Assume settled effectively once broadcast for UI purposes
+                    status: 'pending',
                     txHash: tx.hash,
                     deviceId,
                     voucherData: {
-                        token: currency, // Store token symbol for UI
-                    } as any // Partial voucher data just for token symbol
+                        token: currency,
+                    } as any
                 });
+
+                // Wait for on-chain confirmation, then mark settled
+                try {
+                    await tx.wait(1);
+                    await storage.updatePendingTransaction(txId, { status: 'settled' });
+                } catch (waitErr) {
+                    console.error('Transaction failed to confirm:', waitErr);
+                    await storage.updatePendingTransaction(txId, { status: 'failed' });
+                    throw new Error('Transaction was broadcast but failed to confirm');
+                }
 
                 // Sync with Firebase
                 try {

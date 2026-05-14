@@ -94,7 +94,7 @@ export function SettlementManagement() {
         if (!adminUser) return;
 
         try {
-            const result = await adminActions.retryTransaction(settlement.id, adminUser.uid, true);
+            const result = await adminActions.retryTransaction(settlement.id, adminUser.uid);
             if (result.success) {
                 await loadSettlements();
             }

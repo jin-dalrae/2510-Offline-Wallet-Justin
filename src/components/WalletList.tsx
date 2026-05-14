@@ -63,7 +63,13 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
         }
 
         try {
-            const defaultPassword = 'default-password-for-demo';
+            // Reuse the current session password so the new wallet uses the same
+            // unlock secret as the active wallet on this device.
+            const sessionPassword = sessionStorage.getItem('wallet_session_password');
+            if (!sessionPassword) {
+                toast.error('Please sign in again to add a wallet');
+                return;
+            }
             let wallet;
             let privateKey;
 
@@ -91,10 +97,10 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
                 privateKey = wallet.privateKey;
             }
 
-            // Encrypt and save
+            // Encrypt and save with the current session password
             const encryptedPrivateKey = await WalletManager.encryptPrivateKey(
                 privateKey,
-                defaultPassword
+                sessionPassword
             );
 
             await storage.addWallet(wallet.address, encryptedPrivateKey, walletName);

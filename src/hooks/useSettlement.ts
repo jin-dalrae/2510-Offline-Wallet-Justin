@@ -23,19 +23,6 @@ export function useSettlement(
 
     const [lastOnlineState, setLastOnlineState] = useState(isOnline);
 
-    // Trigger settlement when going online
-    useEffect(() => {
-        if (!lastOnlineState && isOnline && address) {
-            // Just went online
-            console.log('Device went online, checking for pending settlements...');
-            setTimeout(() => {
-                handleSettlement();
-            }, 2000); // Small delay to ensure connection is stable
-        }
-
-        setLastOnlineState(isOnline);
-    }, [isOnline, address]);
-
     const handleSettlement = useCallback(async () => {
         if (!address || !isOnline) {
             console.log('Cannot settle: offline or no address');
@@ -91,6 +78,17 @@ export function useSettlement(
             });
         }
     }, [address, getWallet, isOnline]);
+
+    // Trigger settlement once when transitioning from offline to online.
+    useEffect(() => {
+        if (!lastOnlineState && isOnline && address) {
+            console.log('Device went online, checking for pending settlements...');
+            const timer = setTimeout(() => handleSettlement(), 2000);
+            setLastOnlineState(isOnline);
+            return () => clearTimeout(timer);
+        }
+        setLastOnlineState(isOnline);
+    }, [isOnline, address, lastOnlineState, handleSettlement]);
 
     return {
         ...state,

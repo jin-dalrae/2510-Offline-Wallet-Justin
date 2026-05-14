@@ -91,18 +91,23 @@ class FirebaseService {
     }
 
     /**
-     * Add a pending transaction to Firestore
+     * Add a pending transaction to Firestore.
+     * Stamps `senderUid` with the current auth uid so security rules can
+     * confirm the writer is at least one party to the transaction.
+     * `receiverUid` is set when the recipient claims it from their device.
      */
     async addPendingTransaction(
         transaction: Omit<FirestorePendingTransaction, 'createdAt'>
     ): Promise<void> {
-        if (!this.isInitialized()) return;
+        if (!this.isInitialized() || !this.auth?.currentUser) return;
 
         const db = this.getDb();
         const txRef = doc(db, 'pending_transactions', transaction.id);
 
         await setDoc(txRef, {
             ...transaction,
+            senderUid: this.auth.currentUser.uid,
+            receiverUid: null,
             createdAt: Timestamp.now(),
         });
     }
@@ -202,19 +207,21 @@ class FirebaseService {
     }
 
     /**
-     * Create a new user with encrypted wallet
+     * Create a new user with encrypted wallet.
+     * Stamps `ownerUid` with the current auth uid so rules enforce ownership.
      */
     async createUser(
         username: string,
         encryptedWallet: string,
         accountName: string
     ): Promise<void> {
-        if (!this.isInitialized()) throw new Error('Firebase not initialized');
+        if (!this.isInitialized() || !this.auth?.currentUser) {
+            throw new Error('Firebase not initialized or not signed in');
+        }
 
         const db = this.getDb();
         const userRef = doc(db, 'users', username.toLowerCase());
 
-        // Check if user already exists
         const userDoc = await getDocs(query(collection(db, 'users'), where('username', '==', username.toLowerCase())));
         if (!userDoc.empty) {
             throw new Error('Username already exists');
@@ -224,6 +231,7 @@ class FirebaseService {
             username: username.toLowerCase(),
             encryptedWallet,
             accountName,
+            ownerUid: this.auth.currentUser.uid,
             createdAt: Timestamp.now(),
         });
     }
@@ -291,6 +299,7 @@ class FirebaseService {
                 accountName,
                 email: googleUser.email,
                 googleUid: googleUser.uid,
+                ownerUid: googleUser.uid,
                 photoURL: googleUser.photoURL,
                 createdAt: Timestamp.now(),
                 authProvider: 'google',

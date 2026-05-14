@@ -25,12 +25,21 @@ interface ERC20Contract extends ethers.BaseContract {
     symbol(): Promise<string>;
 }
 
+// Base Sepolia token addresses. Override via .env (VITE_*_CONTRACT_ADDRESS) for mainnet.
+// USDC: official Circle Base Sepolia USDC.
+// EURC: official Circle Base Sepolia EURC.
+// cbBTC: Coinbase Wrapped BTC. Mainnet vanity address; on testnet only when an explicit deployment exists.
 export const USDC_CONTRACT_ADDRESS =
     import.meta.env.VITE_USDC_CONTRACT_ADDRESS ||
-    '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // Base Sepolia USDC
+    '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 
-export const CBBTC_CONTRACT_ADDRESS = '0xcbB7C0006F23900c38EB856149F799620fcb8A4a'; // Base Sepolia cbBTC
-export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182bf77359F'; // EURC on Base Sepolia
+export const EURC_CONTRACT_ADDRESS =
+    import.meta.env.VITE_EURC_CONTRACT_ADDRESS ||
+    '0x808456652fdb597867f38412077A9182bf77359F';
+
+export const CBBTC_CONTRACT_ADDRESS =
+    import.meta.env.VITE_CBBTC_CONTRACT_ADDRESS ||
+    '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf';
 
 export class BlockchainService {
     private provider: ethers.JsonRpcProvider;

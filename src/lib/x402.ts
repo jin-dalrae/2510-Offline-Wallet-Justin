@@ -20,10 +20,13 @@ import { baseSepolia } from 'viem/chains';
 import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
 
-// Token addresses on Base Sepolia
-export const USDC_CONTRACT_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-export const EURC_CONTRACT_ADDRESS = '0x808456652fdb597867f38412077A9182bf77359F';
-export const CBBTC_CONTRACT_ADDRESS = '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf';
+// Re-export token addresses from the single source of truth in blockchain.ts.
+// Kept as re-exports for backward compatibility with existing imports.
+export {
+    USDC_CONTRACT_ADDRESS,
+    EURC_CONTRACT_ADDRESS,
+    CBBTC_CONTRACT_ADDRESS,
+} from './blockchain';
 
 // Base Sepolia chain ID in EIP-155 format
 const BASE_SEPOLIA_CHAIN = 'eip155:84532';
@@ -164,7 +167,7 @@ export class X402Service {
         response: Response,
         url: string
     ): Promise<X402PaymentRequest> {
-        let details: X402PaymentRequest = {
+        const details: X402PaymentRequest = {
             url,
             amount: '',
             token: 'USDC',

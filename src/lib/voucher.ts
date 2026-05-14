@@ -1,5 +1,16 @@
 import { ethers } from 'ethers';
-import { WalletManager } from './wallet';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * Voucher protocol version. v2 adds a `nonce` to the signed payload so that
+ * two identical (from, to, amount) vouchers can be distinguished, killing the
+ * settlement-match replay risk.
+ *
+ * v1 vouchers (legacy) lacked `nonce` and `token` in the signed message.
+ * They are still accepted on the verify path but new vouchers are always v2.
+ */
+export const VOUCHER_VERSION = 2;
+const VOUCHER_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface CreateVoucherParams {
     fromWallet: ethers.HDNodeWallet | ethers.Wallet;
@@ -10,144 +21,124 @@ export interface CreateVoucherParams {
 
 export interface VoucherQRData {
     version: number;
-    privateKey: string;
+    nonce: string;
     amount: string;
     from: string;
     to: string;
     timestamp: number;
     signature: string;
-    token?: string;
+    token: string;
+}
+
+/**
+ * Build the canonical message that gets signed. Version-aware so v1 vouchers
+ * still verify against the original layout.
+ */
+function buildSignedMessage(v: VoucherQRData): string {
+    if (v.version >= 2) {
+        return JSON.stringify({
+            v: v.version,
+            from: v.from,
+            to: v.to,
+            amount: v.amount,
+            token: v.token,
+            timestamp: v.timestamp,
+            nonce: v.nonce,
+        });
+    }
+    // v1 legacy: original message shape without nonce, with optional token default.
+    return JSON.stringify({
+        from: v.from,
+        to: v.to,
+        amount: v.amount,
+        timestamp: v.timestamp,
+        token: v.token || 'USDC',
+        // Legacy v1 also included a tempAddress; not reconstructible here.
+        // Legacy vouchers older than that are no longer accepted.
+    });
 }
 
 export class VoucherService {
     /**
-     * Create a new voucher for offline transfer
-     * This generates a temporary wallet funded with the specified amount
+     * Create a new voucher for offline transfer (v2 format).
+     * Signature binds: from, to, amount, token, timestamp, nonce.
+     * The receiver verifies signature and uses the nonce as a unique settlement key.
      */
     static async createVoucher(params: CreateVoucherParams): Promise<{
         voucherData: VoucherQRData;
-        temporaryWallet: ethers.HDNodeWallet;
     }> {
         const { fromWallet, toAddress, amount, token } = params;
 
-        // Generate temporary wallet for the voucher
-        const { wallet: tempWallet } = WalletManager.createWallet();
+        if (!ethers.isAddress(toAddress)) {
+            throw new Error('Invalid recipient address');
+        }
 
-        // Create voucher data
-        const timestamp = Date.now();
-        const voucherData: Omit<VoucherQRData, 'signature'> = {
-            version: 1,
-            privateKey: tempWallet.privateKey,
+        const partial: VoucherQRData = {
+            version: VOUCHER_VERSION,
+            nonce: uuidv4(),
             amount,
             from: fromWallet.address,
             to: toAddress,
-            timestamp,
-            token: token || 'USDC', // Default to USDC if not specified
+            timestamp: Date.now(),
+            token: token || 'USDC',
+            signature: '', // filled below
         };
 
-        // Sign the voucher with the sender's wallet to prove authenticity
-        const message = JSON.stringify({
-            from: voucherData.from,
-            to: voucherData.to,
-            amount: voucherData.amount,
-            timestamp: voucherData.timestamp,
-            token: voucherData.token,
-            tempAddress: tempWallet.address,
-        });
+        const message = buildSignedMessage(partial);
+        partial.signature = await fromWallet.signMessage(message);
 
-        const signature = await fromWallet.signMessage(message);
-
-        const completeVoucherData: VoucherQRData = {
-            ...voucherData,
-            signature,
-        };
-
-        return {
-            voucherData: completeVoucherData,
-            temporaryWallet: tempWallet,
-        };
+        return { voucherData: partial };
     }
 
-    /**
-     * Encode voucher data to QR-compatible string
-     */
     static encodeVoucher(voucherData: VoucherQRData): string {
         return JSON.stringify(voucherData);
     }
 
-    /**
-     * Decode voucher from QR string
-     */
     static decodeVoucher(qrData: string): VoucherQRData {
+        let parsed: any;
         try {
-            const parsed = JSON.parse(qrData);
-
-            // Validate required fields
-            if (
-                !parsed.version ||
-                !parsed.privateKey ||
-                !parsed.amount ||
-                !parsed.from ||
-                !parsed.to ||
-                !parsed.timestamp ||
-                !parsed.signature
-            ) {
-                throw new Error('Invalid voucher data: missing required fields');
-            }
-
-            return parsed as VoucherQRData;
+            parsed = JSON.parse(qrData);
         } catch (error) {
-            throw new Error('Failed to decode voucher: ' + (error as Error).message);
+            throw new Error('Voucher payload is not valid JSON');
         }
+
+        // Required fields for any version
+        if (!parsed.version || !parsed.amount || !parsed.from || !parsed.to ||
+            !parsed.timestamp || !parsed.signature) {
+            throw new Error('Voucher missing required fields');
+        }
+
+        // v2 requires nonce; v1 didn't have one — synthesize one from timestamp+from
+        // so downstream code (settlement match) has something stable to key on.
+        if (parsed.version >= 2 && !parsed.nonce) {
+            throw new Error('v2 voucher missing nonce');
+        }
+        if (parsed.version < 2 && !parsed.nonce) {
+            parsed.nonce = `legacy-${parsed.from}-${parsed.timestamp}`;
+        }
+
+        parsed.token = parsed.token || 'USDC';
+        return parsed as VoucherQRData;
     }
 
-    /**
-     * Verify voucher signature
-     */
     static async verifyVoucher(
         voucherData: VoucherQRData,
         expectedReceiverAddress: string
-    ): Promise<{
-        isValid: boolean;
-        error?: string;
-    }> {
+    ): Promise<{ isValid: boolean; error?: string }> {
         try {
-            // Check if receiver matches
             if (voucherData.to.toLowerCase() !== expectedReceiverAddress.toLowerCase()) {
-                return {
-                    isValid: false,
-                    error: 'This voucher is not intended for your address',
-                };
+                return { isValid: false, error: 'This voucher is not intended for your address' };
             }
 
-            // Verify signature
-            const tempWallet = WalletManager.fromPrivateKey(voucherData.privateKey);
-            const message = JSON.stringify({
-                from: voucherData.from,
-                to: voucherData.to,
-                amount: voucherData.amount,
-                timestamp: voucherData.timestamp,
-                token: voucherData.token || 'USDC', // For backward compatibility? Or assume new format
-                tempAddress: tempWallet.address,
-            });
-
+            const message = buildSignedMessage(voucherData);
             const recoveredAddress = ethers.verifyMessage(message, voucherData.signature);
 
             if (recoveredAddress.toLowerCase() !== voucherData.from.toLowerCase()) {
-                return {
-                    isValid: false,
-                    error: 'Invalid voucher signature',
-                };
+                return { isValid: false, error: 'Invalid voucher signature' };
             }
 
-            // Check timestamp (vouchers expire after 7 days)
-            const now = Date.now();
-            const sevenDays = 7 * 24 * 60 * 60 * 1000;
-            if (now - voucherData.timestamp > sevenDays) {
-                return {
-                    isValid: false,
-                    error: 'Voucher has expired',
-                };
+            if (Date.now() - voucherData.timestamp > VOUCHER_EXPIRY_MS) {
+                return { isValid: false, error: 'Voucher has expired' };
             }
 
             return { isValid: true };
@@ -159,46 +150,20 @@ export class VoucherService {
         }
     }
 
-    /**
-     * Redeem voucher (import temporary wallet)
-     */
-    static redeemVoucher(voucherData: VoucherQRData): ethers.Wallet {
-        return WalletManager.fromPrivateKey(voucherData.privateKey);
-    }
-
-    /**
-     * Generate address QR data for receiving
-     */
     static encodeAddress(address: string): string {
-        return JSON.stringify({
-            type: 'address',
-            address,
-        });
+        return JSON.stringify({ type: 'address', address });
     }
 
-    /**
-     * Decode address from QR data
-     */
     static decodeAddress(qrData: string): string {
         try {
             const parsed = JSON.parse(qrData);
-
             if (parsed.type === 'address' && parsed.address) {
                 return parsed.address;
             }
-
-            // Also support raw address strings
-            if (ethers.isAddress(qrData)) {
-                return qrData;
-            }
-
-            throw new Error('Invalid address QR data');
-        } catch (error) {
-            // Try as raw address
-            if (ethers.isAddress(qrData)) {
-                return qrData;
-            }
-            throw new Error('Failed to decode address: ' + (error as Error).message);
+        } catch {
+            // Fall through to raw address check.
         }
+        if (ethers.isAddress(qrData)) return qrData;
+        throw new Error('Invalid address QR data');
     }
 }

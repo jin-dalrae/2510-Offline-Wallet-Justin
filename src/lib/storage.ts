@@ -49,7 +49,7 @@ export interface PendingTransaction {
 
 export interface VoucherData {
     version: number;
-    privateKey: string;
+    nonce?: string; // v2+; v1 vouchers may lack this
     amount: string;
     from: string;
     to: string;
@@ -111,77 +111,53 @@ class StorageManager {
         return this.deviceId;
     }
 
-    // Wallet operations
-    async saveWallet(
-        address: string,
-        encryptedPrivateKey: string,
-        accountName?: string,
-        profilePicture?: string
-    ): Promise<void> {
-        if (!this.db) throw new Error('Database not initialized');
-
-        await this.db.put('wallet', {
-            id: 'main',
-            address,
-            encryptedPrivateKey,
-            accountName,
-            profilePicture,
-        });
-    }
-
     async updateWalletProfile(
         accountName?: string,
         profilePicture?: string | null
     ): Promise<void> {
         if (!this.db) throw new Error('Database not initialized');
 
-        // Get active wallet ID logic
         const activeId = await this.getActiveWalletId();
-        const walletId = activeId || 'main'; // Fallback for legacy
+        if (!activeId) throw new Error('No active wallet');
 
-        const wallet = await this.db.get('wallet', walletId);
+        const wallet = await this.db.get('wallet', activeId);
         if (!wallet) throw new Error('No wallet found');
 
-        const updates: any = {};
+        const updates: Partial<typeof wallet> = {};
         if (accountName !== undefined) updates.accountName = accountName;
-        if (profilePicture !== undefined) updates.profilePicture = profilePicture;
-        // If profilePicture is explicitly null, we might want to clear it.
-        // My previous code in SettingsModal passes null for remove.
-        // So checking !== undefined is correct to distinguish "no change" vs "change to null".
-        if (profilePicture === null) updates.profilePicture = null;
+        if (profilePicture !== undefined) {
+            updates.profilePicture = profilePicture === null ? undefined : profilePicture;
+        }
 
-
-        await this.db.put('wallet', {
-            ...wallet,
-            ...updates
-        });
+        await this.db.put('wallet', { ...wallet, ...updates });
     }
 
+    /**
+     * Get the currently active wallet record (single source of truth).
+     * Returns null if no wallet has been created or imported on this device.
+     */
     async getWallet(): Promise<{
+        id: string;
         address: string;
         encryptedPrivateKey: string;
         accountName?: string;
         profilePicture?: string;
     } | null> {
-        if (!this.db) throw new Error('Database not initialized');
-
-        const wallet = await this.db.get('wallet', 'main');
-        if (!wallet) return null;
-
-        return {
-            address: wallet.address,
-            encryptedPrivateKey: wallet.encryptedPrivateKey,
-            accountName: wallet.accountName,
-            profilePicture: wallet.profilePicture,
-        };
+        const active = await this.getActiveWallet();
+        return active ?? null;
     }
 
-    async deleteWallet(): Promise<void> {
+    async deleteActiveWallet(): Promise<void> {
         if (!this.db) throw new Error('Database not initialized');
-        await this.db.delete('wallet', 'main');
+        const activeId = await this.getActiveWalletId();
+        if (!activeId) return;
+        await this.db.delete('wallet', activeId);
+        localStorage.removeItem('activeWalletId');
     }
 
-    // Multi-wallet operations
+    /**
+     * Add a wallet record. Becomes the active wallet if it's the first one.
+     */
     async addWallet(
         address: string,
         encryptedPrivateKey: string,
@@ -197,7 +173,6 @@ class StorageManager {
             accountName,
         });
 
-        // If this is the first wallet, set it as active
         const wallets = await this.getAllWallets();
         if (wallets.length === 1) {
             await this.setActiveWallet(walletId);
@@ -211,12 +186,10 @@ class StorageManager {
         address: string;
         encryptedPrivateKey: string;
         accountName?: string;
+        profilePicture?: string;
     }>> {
         if (!this.db) throw new Error('Database not initialized');
-
-        const allWallets = await this.db.getAll('wallet');
-        // Filter out the old 'main' wallet if it exists
-        return allWallets.filter(w => w.id !== 'main');
+        return await this.db.getAll('wallet');
     }
 
     async getWalletById(id: string): Promise<{
@@ -224,6 +197,7 @@ class StorageManager {
         address: string;
         encryptedPrivateKey: string;
         accountName?: string;
+        profilePicture?: string;
     } | null> {
         if (!this.db) throw new Error('Database not initialized');
         return await this.db.get('wallet', id) || null;
@@ -260,6 +234,7 @@ class StorageManager {
         address: string;
         encryptedPrivateKey: string;
         accountName?: string;
+        profilePicture?: string;
     } | null> {
         const activeId = await this.getActiveWalletId();
         if (!activeId) return null;
