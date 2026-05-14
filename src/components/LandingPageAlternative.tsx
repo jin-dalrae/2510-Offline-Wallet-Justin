@@ -4,10 +4,11 @@ interface LandingPageProps {
     onSignUp: () => void;
     onSignIn: () => void;
     onPrivacy: () => void;
+    onTerms: () => void;
     onTryDemo: () => void;
 }
 
-export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTryDemo }: LandingPageProps) {
+export function LandingPageAlternative({ onSignUp, onSignIn, onPrivacy, onTerms, onTryDemo }: LandingPageProps) {
     const [scrolled, setScrolled] = useState(false);
 
     useEffect(() => {
@@ -412,12 +413,12 @@ const data = await response.json();
                 <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
                     <div className="text-3xl font-serif font-bold text-white">justin</div>
                     <div className="flex gap-8 text-sm font-medium text-slate-400">
-                        <a href="#" className="hover:text-[#4bf2e6] transition-colors">Terms</a>
+                        <button onClick={onTerms} className="hover:text-[#4bf2e6] transition-colors">Terms</button>
                         <button onClick={onPrivacy} className="hover:text-[#4bf2e6] transition-colors">Privacy</button>
-                        <a href="#" className="hover:text-[#4bf2e6] transition-colors">Contact</a>
+                        <a href="mailto:legal@justin.example" className="hover:text-[#4bf2e6] transition-colors">Contact</a>
                         <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:text-[#4bf2e6] transition-colors">GitHub</a>
                     </div>
-                    <p className="text-sm text-slate-500">© 2024 Justin Payments. All rights reserved.</p>
+                    <p className="text-sm text-slate-500">© 2026 Justin Payments. All rights reserved.</p>
                 </div>
             </footer>
         </div>

@@ -7,15 +7,20 @@ interface SignUpProps {
     onComplete: (accountName: string, privateKey: string, password: string) => void;
     onBack: () => void;
     onPrivacy: () => void;
+    onTerms: () => void;
 }
 
-export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
+export function SignUp({ onComplete, onBack, onPrivacy, onTerms }: SignUpProps) {
     const [accountName, setAccountName] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [agreed, setAgreed] = useState(false);
+    const [agreedTerms, setAgreedTerms] = useState(false);
+    const [agreedPrivacy, setAgreedPrivacy] = useState(false);
+    const [acknowledgedRisk, setAcknowledgedRisk] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+
+    const allAgreed = agreedTerms && agreedPrivacy && acknowledgedRisk;
 
     const handleCreate = async () => {
         if (!accountName.trim()) {
@@ -34,8 +39,8 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
             toast.error('Passwords do not match');
             return;
         }
-        if (!agreed) {
-            toast.error('Please agree to the Terms');
+        if (!allAgreed) {
+            toast.error('Please agree to the Terms, Privacy Policy, and risk acknowledgement');
             return;
         }
 
@@ -66,8 +71,8 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
 
 
     const handleGoogleSignUp = async () => {
-        if (!agreed) {
-            toast.error('Please agree to the Terms');
+        if (!allAgreed) {
+            toast.error('Please agree to the Terms, Privacy Policy, and risk acknowledgement');
             return;
         }
 
@@ -123,7 +128,7 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
                 {/* Google Sign Up Button */}
                 <button
                     onClick={handleGoogleSignUp}
-                    disabled={isLoading}
+                    disabled={isLoading || !allAgreed}
                     className="w-full bg-white border-2 border-slate-200 text-slate-700 font-bold text-lg py-4 rounded-2xl shadow-sm hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 mb-6"
                 >
                     <svg className="w-6 h-6" viewBox="0 0 24 24">
@@ -135,23 +140,20 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
                     Sign up with Google
                 </button>
 
-                <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 mb-6">
-                    <input
-                        type="checkbox"
-                        id="google-agreement"
-                        checked={agreed}
-                        onChange={(e) => setAgreed(e.target.checked)}
-                        className="mt-1 w-5 h-5 rounded-lg border-2 border-slate-300 text-slate-900 focus:ring-slate-900 transition-all cursor-pointer"
-                        disabled={isLoading}
-                    />
-                    <label htmlFor="google-agreement" className="text-sm text-slate-600 leading-relaxed cursor-pointer select-none">
-                        I agree to the{' '}
-                        <button onClick={onPrivacy} className="text-slate-900 font-bold hover:underline">
-                            Privacy Policy
-                        </button>
-                        {' '}and User Agreement. I understand that if I lose access to my Google account, my wallet cannot be recovered.
-                    </label>
-                </div>
+                <AgreementBlock
+                    idPrefix="google"
+                    isLoading={isLoading}
+                    agreedTerms={agreedTerms}
+                    agreedPrivacy={agreedPrivacy}
+                    acknowledgedRisk={acknowledgedRisk}
+                    onTermsChange={setAgreedTerms}
+                    onPrivacyChange={setAgreedPrivacy}
+                    onRiskChange={setAcknowledgedRisk}
+                    onOpenPrivacy={onPrivacy}
+                    onOpenTerms={onTerms}
+                    riskCopy="If I lose access to my Google account, my wallet cannot be recovered."
+                    className="mb-6"
+                />
 
                 <div className="relative mb-6">
                     <div className="absolute inset-0 flex items-center">
@@ -213,27 +215,23 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
                         />
                     </div>
 
-                    <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                        <input
-                            type="checkbox"
-                            id="agreement"
-                            checked={agreed}
-                            onChange={(e) => setAgreed(e.target.checked)}
-                            className="mt-1 w-5 h-5 rounded-lg border-2 border-slate-300 text-slate-900 focus:ring-slate-900 transition-all cursor-pointer"
-                            disabled={isLoading}
-                        />
-                        <label htmlFor="agreement" className="text-sm text-slate-600 leading-relaxed cursor-pointer select-none">
-                            I agree to the{' '}
-                            <button onClick={onPrivacy} className="text-slate-900 font-bold hover:underline">
-                                Privacy Policy
-                            </button>
-                            {' '}and User Agreement. I understand that if I lose my password, my account cannot be recovered.
-                        </label>
-                    </div>
+                    <AgreementBlock
+                        idPrefix="email"
+                        isLoading={isLoading}
+                        agreedTerms={agreedTerms}
+                        agreedPrivacy={agreedPrivacy}
+                        acknowledgedRisk={acknowledgedRisk}
+                        onTermsChange={setAgreedTerms}
+                        onPrivacyChange={setAgreedPrivacy}
+                        onRiskChange={setAcknowledgedRisk}
+                        onOpenPrivacy={onPrivacy}
+                        onOpenTerms={onTerms}
+                        riskCopy="If I lose my password or recovery phrase, my funds cannot be recovered. Justin cannot help me get them back."
+                    />
 
                     <button
                         onClick={handleCreate}
-                        disabled={isLoading}
+                        disabled={isLoading || !allAgreed}
                         className={`w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3`}
                     >
                         {isLoading ? (
@@ -247,6 +245,110 @@ export function SignUp({ onComplete, onBack, onPrivacy }: SignUpProps) {
                     </button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+interface AgreementBlockProps {
+    idPrefix: string;
+    isLoading: boolean;
+    agreedTerms: boolean;
+    agreedPrivacy: boolean;
+    acknowledgedRisk: boolean;
+    onTermsChange: (v: boolean) => void;
+    onPrivacyChange: (v: boolean) => void;
+    onRiskChange: (v: boolean) => void;
+    onOpenTerms: () => void;
+    onOpenPrivacy: () => void;
+    riskCopy: string;
+    className?: string;
+}
+
+function AgreementBlock({
+    idPrefix,
+    isLoading,
+    agreedTerms,
+    agreedPrivacy,
+    acknowledgedRisk,
+    onTermsChange,
+    onPrivacyChange,
+    onRiskChange,
+    onOpenTerms,
+    onOpenPrivacy,
+    riskCopy,
+    className = '',
+}: AgreementBlockProps) {
+    return (
+        <div className={`space-y-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 ${className}`}>
+            <Check
+                id={`${idPrefix}-terms`}
+                checked={agreedTerms}
+                onChange={onTermsChange}
+                disabled={isLoading}
+            >
+                I have read and agree to the{' '}
+                <button
+                    type="button"
+                    onClick={onOpenTerms}
+                    className="text-slate-900 font-bold hover:underline"
+                >
+                    Terms of Service
+                </button>
+                .
+            </Check>
+            <Check
+                id={`${idPrefix}-privacy`}
+                checked={agreedPrivacy}
+                onChange={onPrivacyChange}
+                disabled={isLoading}
+            >
+                I have read and agree to the{' '}
+                <button
+                    type="button"
+                    onClick={onOpenPrivacy}
+                    className="text-slate-900 font-bold hover:underline"
+                >
+                    Privacy Policy
+                </button>
+                .
+            </Check>
+            <Check
+                id={`${idPrefix}-risk`}
+                checked={acknowledgedRisk}
+                onChange={onRiskChange}
+                disabled={isLoading}
+            >
+                {riskCopy}
+            </Check>
+        </div>
+    );
+}
+
+interface CheckProps {
+    id: string;
+    checked: boolean;
+    onChange: (v: boolean) => void;
+    disabled?: boolean;
+    children: React.ReactNode;
+}
+
+function Check({ id, checked, onChange, disabled, children }: CheckProps) {
+    return (
+        <div className="flex items-start gap-3">
+            <input
+                type="checkbox"
+                id={id}
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                disabled={disabled}
+                className="mt-1 w-5 h-5 rounded-lg border-2 border-slate-300 text-slate-900 focus:ring-slate-900 transition-all cursor-pointer flex-shrink-0"
+            />
+            <label
+                htmlFor={id}
+                className="text-sm text-slate-700 leading-relaxed cursor-pointer select-none"
+            >
+                {children}
+            </label>
         </div>
     );
 }

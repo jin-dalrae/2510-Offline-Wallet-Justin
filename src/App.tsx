@@ -13,6 +13,7 @@ import { SendOffline } from './components/SendOffline';
 import { ReceiveOffline } from './components/ReceiveOffline';
 import { TransactionHistory } from './components/TransactionHistory';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { Terms } from './components/Terms';
 import { ProtectedAdminRoute } from './components/admin/ProtectedAdminRoute';
 import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminDashboard } from './components/admin/AdminDashboard';
@@ -177,6 +178,7 @@ function App() {
                             onSignUp={() => navigate('/signup')}
                             onSignIn={() => navigate('/signin')}
                             onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                             onTryDemo={() => navigate('/signup')}
                         />
                     }
@@ -189,6 +191,7 @@ function App() {
                             onComplete={handleSignUp}
                             onBack={() => navigate('/')}
                             onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                         />
                     }
                 />
@@ -228,6 +231,7 @@ function App() {
                                 onSignUp={() => navigate('/signup')}
                                 onSignIn={() => navigate('/signin')}
                                 onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                                 onTryDemo={() => navigate('/signup')}
                             />
                         )
@@ -250,6 +254,7 @@ function App() {
                                 onSignUp={() => navigate('/signup')}
                                 onSignIn={() => navigate('/signin')}
                                 onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                                 onTryDemo={() => navigate('/signup')}
                             />
                         )
@@ -270,6 +275,7 @@ function App() {
                                 onSignUp={() => navigate('/signup')}
                                 onSignIn={() => navigate('/signin')}
                                 onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                                 onTryDemo={() => navigate('/signup')}
                             />
                         )
@@ -290,6 +296,7 @@ function App() {
                                 onSignUp={() => navigate('/signup')}
                                 onSignIn={() => navigate('/signin')}
                                 onPrivacy={() => navigate('/privacy')}
+                            onTerms={() => navigate('/terms')}
                                 onTryDemo={() => navigate('/signup')}
                             />
                         )
@@ -301,6 +308,17 @@ function App() {
                     element={
                         <PrivacyPolicy
                             onBack={() => navigate(wallet.isUnlocked ? '/dashboard' : '/')}
+                            onOpenTerms={() => navigate('/terms')}
+                        />
+                    }
+                />
+
+                <Route
+                    path="/terms"
+                    element={
+                        <Terms
+                            onBack={() => navigate(wallet.isUnlocked ? '/dashboard' : '/')}
+                            onOpenPrivacy={() => navigate('/privacy')}
                         />
                     }
                 />
