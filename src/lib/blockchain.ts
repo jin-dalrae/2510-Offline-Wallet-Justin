@@ -1,10 +1,25 @@
 import { ethers } from 'ethers';
 
-// Base Sepolia configuration
+/**
+ * Pick the best available RPC URL for Base Sepolia. Priority:
+ *   1. An explicit override in VITE_BASE_SEPOLIA_RPC (full URL).
+ *   2. Coinbase Developer Platform's RPC, authenticated via VITE_CDP_CLIENT_API_KEY.
+ *      This is rate-limit-free and faster than the public RPC for the user's
+ *      authenticated project. The Client API Key is browser-safe by design.
+ *   3. The public free RPC at sepolia.base.org (rate-limited, fine for casual use).
+ */
+function pickBaseSepoliaRpc(): string {
+    const override = import.meta.env.VITE_BASE_SEPOLIA_RPC;
+    if (override) return override;
+    const cdpKey = import.meta.env.VITE_CDP_CLIENT_API_KEY;
+    if (cdpKey) return `https://api.developer.coinbase.com/rpc/v1/base-sepolia/${cdpKey}`;
+    return 'https://sepolia.base.org';
+}
+
 export const BASE_SEPOLIA_CONFIG = {
     chainId: 84532,
     name: 'Base Sepolia',
-    rpcUrl: import.meta.env.VITE_BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
+    rpcUrl: pickBaseSepoliaRpc(),
     blockExplorer: 'https://sepolia.basescan.org',
 };
 

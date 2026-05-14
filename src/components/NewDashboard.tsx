@@ -532,7 +532,7 @@ export function NewDashboard({
             }
             {/* Load Money Modal */}
             {showLoad && (
-                <LoadMoney onClose={() => setShowLoad(false)} />
+                <LoadMoney onClose={() => setShowLoad(false)} walletAddress={address} />
             )}
 
             {showSend && (
