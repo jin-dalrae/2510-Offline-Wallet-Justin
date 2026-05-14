@@ -39,3 +39,8 @@ ios/DerivedData/
 ios/App/output/
 *.xcuserdata/
 xcuserdata/
+
+# Hardhat build artifacts
+cache/
+artifacts/
+typechain-types/
