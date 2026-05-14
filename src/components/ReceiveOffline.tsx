@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
+import { escrow } from '../lib/escrow';
 import { storage } from '../lib/storage';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
@@ -32,7 +33,6 @@ export function ReceiveOffline({
 
     const handleVoucherScanned = async (qrData: string) => {
         if (processingRef.current) return;
-        // Prevent repeated alerts for the same invalid QR code
         if (qrData === lastScannedRef.current) return;
 
         processingRef.current = true;
@@ -40,14 +40,8 @@ export function ReceiveOffline({
         lastScannedRef.current = qrData;
 
         try {
-            // Decode voucher
-            const voucherData = VoucherService.decodeVoucher(qrData);
-
-            // Verify voucher
-            const verification = await VoucherService.verifyVoucher(
-                voucherData,
-                address
-            );
+            const voucher = escrow.decodeVoucher(qrData);
+            const verification = escrow.verifyVoucher(voucher, address);
 
             if (!verification.isValid) {
                 toast.error(verification.error || 'Invalid voucher');
@@ -55,34 +49,37 @@ export function ReceiveOffline({
                 return;
             }
 
-            // Save pending transaction
+            // Convert base-units (string) into a human display amount using the
+            // sender-declared decimals (humanAmount), with a fallback for USDC.
+            const humanAmount = voucher.humanAmount ?? voucher.amount;
+
             const txId = uuidv4();
             const deviceId = storage.getDeviceId();
 
             await storage.addPendingTransaction({
                 id: txId,
                 type: 'received',
-                from: voucherData.from,
-                to: voucherData.to,
-                amount: voucherData.amount,
-                voucherData: voucherData,
+                from: voucher.from,
+                to: voucher.to,
+                amount: humanAmount,
+                voucher,
+                tokenSymbol: voucher.tokenSymbol,
                 timestamp: Date.now(),
                 status: 'pending',
                 deviceId,
             });
 
-            // Update offline balance
             const currentBalances = await storage.getOfflineBalances();
             const newReceived =
-                parseFloat(currentBalances.received) + parseFloat(voucherData.amount);
+                parseFloat(currentBalances.received) + parseFloat(humanAmount);
             await storage.updateOfflineBalances(
                 currentBalances.sent,
                 newReceived.toString()
             );
 
-            setVoucherAmount(voucherData.amount);
-            setVoucherToken(voucherData.token || 'USDC');
-            setSenderAddress(voucherData.from);
+            setVoucherAmount(humanAmount);
+            setVoucherToken(voucher.tokenSymbol || 'USDC');
+            setSenderAddress(voucher.from);
             setStep('complete');
             toast.success('Voucher received!');
         } catch (err) {

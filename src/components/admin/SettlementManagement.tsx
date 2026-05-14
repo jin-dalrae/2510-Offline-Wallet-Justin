@@ -48,7 +48,7 @@ export function SettlementManagement() {
                     timestamp: tx.timestamp || tx.createdAt,
                     attempts: tx.settlementAttempts || 0,
                     lastError: tx.errorReason,
-                    voucherAddress: tx.voucherData?.address,
+                    voucherNonce: tx.voucher?.nonce,
                 }));
 
             setSettlements(pendingSettlements);

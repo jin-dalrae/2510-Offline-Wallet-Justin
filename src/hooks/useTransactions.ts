@@ -50,7 +50,7 @@ export function useTransactions(address: string, isOnline: boolean) {
                 status: tx.status,
                 txHash: tx.txHash,
                 source: 'local',
-                tokenSymbol: tx.voucherData?.token || 'USDC',
+                tokenSymbol: tx.tokenSymbol || tx.voucher?.tokenSymbol || 'USDC',
             }));
 
             let chainTxs: DisplayTransaction[] = [];

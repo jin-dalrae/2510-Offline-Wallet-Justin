@@ -1,5 +1,6 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { v4 as uuidv4 } from 'uuid';
+import type { VoucherV3 } from './escrow';
 
 interface WalletDB extends DBSchema {
     wallet: {
@@ -40,22 +41,18 @@ export interface PendingTransaction {
     from: string;
     to: string;
     amount: string;
-    voucherData?: VoucherData;
+    /**
+     * The full signed voucher when this entry represents an offline transfer.
+     * Absent for transactions that originated as on-chain transfers (no
+     * voucher exchange happened).
+     */
+    voucher?: VoucherV3;
+    /** Cached token symbol for UI display when voucher is absent. */
+    tokenSymbol?: string;
     timestamp: number;
     status: 'pending' | 'settled' | 'failed';
     txHash?: string;
     deviceId: string;
-}
-
-export interface VoucherData {
-    version: number;
-    nonce?: string; // v2+; v1 vouchers may lack this
-    amount: string;
-    from: string;
-    to: string;
-    timestamp: number;
-    signature: string;
-    token?: string;
 }
 
 class StorageManager {

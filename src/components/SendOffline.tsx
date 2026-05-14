@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
+import { escrow } from '../lib/escrow';
 import { storage } from '../lib/storage';
 import { ethers } from 'ethers';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,6 +16,19 @@ import {
 } from '../lib/blockchain';
 import { firebase } from '../lib/firebase';
 import { BalanceState } from '../hooks/useBalance';
+
+const TOKEN_ADDRESS: Record<'USDC' | 'EURC' | 'cbBTC', string> = {
+    USDC: USDC_CONTRACT_ADDRESS,
+    EURC: EURC_CONTRACT_ADDRESS,
+    cbBTC: CBBTC_CONTRACT_ADDRESS,
+};
+
+// USDC and EURC use 6 decimals; cbBTC uses 8.
+const TOKEN_DECIMALS: Record<'USDC' | 'EURC' | 'cbBTC', number> = {
+    USDC: 6,
+    EURC: 6,
+    cbBTC: 8,
+};
 
 interface SendOfflineProps {
     wallet: ethers.HDNodeWallet | ethers.Wallet;
@@ -40,6 +54,41 @@ export function SendOffline({
     const [voucherQR, setVoucherQR] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [offlineBudget, setOfflineBudget] = useState<string | null>(null);
+
+    // Cache the user's locked escrow budget across online/offline transitions.
+    // Online: query the chain, persist to localStorage.
+    // Offline: read the most recent cached value so the amount-entry step can
+    //          still show "you have X locked" without an RPC call.
+    const budgetCacheKey = `offlineBudget:${wallet.address}:${currency}`;
+    useEffect(() => {
+        let cancelled = false;
+        const run = async () => {
+            // Hydrate from cache immediately.
+            const cached = localStorage.getItem(budgetCacheKey);
+            if (cached && !cancelled) setOfflineBudget(cached);
+
+            // Refresh from chain if online.
+            if (!isOnline) return;
+            const avail = escrow.isAvailable();
+            if (!avail.available) return;
+
+            try {
+                const tokenAddress = TOKEN_ADDRESS[currency];
+                const decimals = TOKEN_DECIMALS[currency];
+                const budget = await escrow.getBudget(wallet.address, tokenAddress);
+                const human = ethers.formatUnits(budget, decimals);
+                localStorage.setItem(budgetCacheKey, human);
+                if (!cancelled) setOfflineBudget(human);
+            } catch (e) {
+                console.warn('Could not fetch escrow budget:', e);
+            }
+        };
+        run();
+        return () => {
+            cancelled = true;
+        };
+    }, [isOnline, currency, wallet.address, budgetCacheKey]);
 
     const getAvailableBalance = () => {
         switch (currency) {
@@ -54,37 +103,32 @@ export function SendOffline({
         const amountNum = parseFloat(amount);
         const availableNum = getAvailableBalance();
 
-
-        // Input validation
         if (!amount || amount.trim() === '') {
             setError('Please enter an amount');
             return;
         }
-
         if (isNaN(amountNum) || amountNum <= 0) {
             setError('Please enter a valid amount');
             return;
         }
-
         if (amountNum < 0.01) {
             setError(`Minimum amount is 0.01 ${currency}`);
             return;
         }
 
-        // Check offline allowance ONLY if offline
-        if (!isOnline) {
-            const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
-            if (offlineAllowanceData) {
-                const { limit, spent } = JSON.parse(offlineAllowanceData);
-                const availableOffline = limit - spent;
-                if (amountNum > availableOffline) {
-                    setError(`Insufficient offline allowance. Available: $${availableOffline.toFixed(2)}`);
-                    return;
-                }
+        // When offline, the spend must fit inside the on-chain escrow budget,
+        // which we cached last time we were online. If we don't have a cached
+        // value, warn but allow — settlement will reject if budget is short.
+        if (!isOnline && offlineBudget !== null) {
+            const budgetNum = parseFloat(offlineBudget);
+            if (amountNum > budgetNum) {
+                setError(
+                    `Offline budget too low. ${budgetNum.toFixed(2)} ${currency} available.`
+                );
+                return;
             }
         }
 
-        // Maximum amount validation (10,000 USDC per transaction)
         if (amountNum > 10000) {
             setError(`Maximum amount is 10,000 ${currency} per transaction`);
             return;
@@ -126,19 +170,15 @@ export function SendOffline({
         setIsLoading(true);
 
         try {
+            const tokenAddress = TOKEN_ADDRESS[currency];
+            const decimals = TOKEN_DECIMALS[currency];
+            const amountBase = ethers.parseUnits(amount, decimals);
+
             if (isOnline) {
-                // ONLINE SEND LOGIC
-                let tokenAddress = USDC_CONTRACT_ADDRESS;
-                if (currency === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
-                if (currency === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
-
-                // Check Gas (ETH)
+                // ONLINE: regular ERC20 transfer from wallet -> recipient.
                 const hasGas = await blockchain.hasEnoughGas(wallet.address);
-                if (!hasGas) {
-                    throw new Error('Insufficient ETH for gas fees');
-                }
+                if (!hasGas) throw new Error('Insufficient ETH for gas fees');
 
-                // Broadcast transaction
                 const tx = await blockchain.transferERC20(
                     wallet as any,
                     tokenAddress,
@@ -146,7 +186,6 @@ export function SendOffline({
                     amount
                 );
 
-                // Record as pending while waiting for confirmation
                 const txId = uuidv4();
                 const deviceId = storage.getDeviceId();
 
@@ -156,16 +195,13 @@ export function SendOffline({
                     from: wallet.address,
                     to: toAddress,
                     amount,
+                    tokenSymbol: currency,
                     timestamp: Date.now(),
                     status: 'pending',
                     txHash: tx.hash,
                     deviceId,
-                    voucherData: {
-                        token: currency,
-                    } as any
                 });
 
-                // Wait for on-chain confirmation, then mark settled
                 try {
                     await tx.wait(1);
                     await storage.updatePendingTransaction(txId, { status: 'settled' });
@@ -175,7 +211,6 @@ export function SendOffline({
                     throw new Error('Transaction was broadcast but failed to confirm');
                 }
 
-                // Sync with Firebase
                 try {
                     await firebase.initialize();
                     await firebase.addPendingTransaction({
@@ -186,13 +221,9 @@ export function SendOffline({
                         status: 'settled',
                         settledTxHash: tx.hash,
                         deviceId,
-                        voucherData: {
-                            token: currency,
-                        } as any
-                    });
+                    } as any);
                 } catch (e) {
                     console.error('Failed to sync online transaction to Firebase:', e);
-                    // Don't fail the whole flow if Firebase sync fails, as local storage is updated
                 }
 
                 toast.success('Transaction sent!');
@@ -200,20 +231,37 @@ export function SendOffline({
                 return;
             }
 
-            // OFFLINE VOUCHER LOGIC
-            // Create voucher
-            const { voucherData } = await VoucherService.createVoucher({
-                fromWallet: wallet,
-                toAddress,
-                amount,
-                token: currency, // Pass selected currency
+            // OFFLINE: sign an EIP-712 voucher redeemable against the escrow contract.
+            const escrowStatus = escrow.isAvailable();
+            if (!escrowStatus.available) {
+                throw new Error(
+                    'Offline payments require the OfflineEscrow contract to be configured. ' +
+                    'Deploy it (npm run contract:deploy) and set VITE_ESCROW_CONTRACT_ADDRESS.'
+                );
+            }
+
+            // Make sure the sender's escrow budget covers this voucher.
+            const budget = await escrow.getBudget(wallet.address, tokenAddress);
+            if (budget < amountBase) {
+                const human = ethers.formatUnits(budget, decimals);
+                throw new Error(
+                    `Offline budget too low. You have ${human} ${currency} locked. ` +
+                    `Top up your offline budget while online before sending.`
+                );
+            }
+
+            const voucher = await escrow.signVoucher({
+                wallet,
+                to: toAddress,
+                token: tokenAddress,
+                amount: amountBase,
+                tokenSymbol: currency,
+                humanAmount: amount,
             });
 
-            // Encode for QR
-            const qrString = VoucherService.encodeVoucher(voucherData);
+            const qrString = escrow.encodeVoucher(voucher);
             setVoucherQR(qrString);
 
-            // Save pending transaction locally
             const txId = uuidv4();
             const deviceId = storage.getDeviceId();
 
@@ -223,33 +271,17 @@ export function SendOffline({
                 from: wallet.address,
                 to: toAddress,
                 amount,
-                voucherData: voucherData,
+                voucher,
+                tokenSymbol: currency,
                 timestamp: Date.now(),
                 status: 'pending',
                 deviceId,
             });
 
-            // Update offline balance
+            // Local bookkeeping for UI badges.
             const currentBalances = await storage.getOfflineBalances();
-            const newSent =
-                parseFloat(currentBalances.sent) + parseFloat(amount);
-            await storage.updateOfflineBalances(
-                newSent.toString(),
-                currentBalances.received
-            );
-
-            // Update offline allowance spent
-            const offlineAllowanceData = localStorage.getItem(`offlineAllowance_${wallet.address}`);
-            if (offlineAllowanceData) {
-                const { limit, spent } = JSON.parse(offlineAllowanceData);
-                const newSpent = spent + parseFloat(amount);
-                localStorage.setItem(
-                    `offlineAllowance_${wallet.address}`,
-                    JSON.stringify({ limit, spent: newSpent })
-                );
-                // Notify other components of the change
-                window.dispatchEvent(new Event('offlineAllowanceUpdated'));
-            }
+            const newSent = parseFloat(currentBalances.sent) + parseFloat(amount);
+            await storage.updateOfflineBalances(newSent.toString(), currentBalances.received);
 
             setStep('show-voucher');
             toast.success('Voucher created!');

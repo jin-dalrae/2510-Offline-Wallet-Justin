@@ -1,11 +1,7 @@
 import { ethers } from 'ethers';
 import { storage, PendingTransaction } from './storage';
-import {
-    blockchain,
-    USDC_CONTRACT_ADDRESS,
-    CBBTC_CONTRACT_ADDRESS,
-    EURC_CONTRACT_ADDRESS
-} from './blockchain';
+import { blockchain } from './blockchain';
+import { escrow } from './escrow';
 import { firebase } from './firebase';
 
 export interface SettlementResult {
@@ -25,6 +21,21 @@ async function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Settlement under the escrow model:
+ *
+ *   - SENT pending tx (with a voucher): the sender has nothing to broadcast
+ *     — the escrow contract already holds their collateral. Settlement just
+ *     watches the chain for the receiver's claim() and flips status to
+ *     'settled' once the voucher's nonce is marked used.
+ *
+ *   - RECEIVED pending tx (with a voucher): the receiver calls escrow.claim()
+ *     on-chain, which transfers the tokens from the sender's locked budget
+ *     to the receiver's wallet.
+ *
+ *   - SENT pending tx without a voucher (online direct transfer that didn't
+ *     finish confirming): wait for the tx hash to confirm.
+ */
 export class SettlementService {
     private isSettling: boolean = false;
     private config: SettlementConfig = {
@@ -32,13 +43,6 @@ export class SettlementService {
         retryDelayMs: 2000,
     };
 
-    /**
-     * Settle all pending received transactions
-     * This sweeps funds from temporary wallets to the main wallet
-     */
-    /**
-     * Settle all pending transactions (sent and received)
-     */
     async settlePendingTransactions(
         mainWallet: ethers.HDNodeWallet | ethers.Wallet,
         onProgress?: (current: number, total: number, status: string) => void
@@ -46,17 +50,14 @@ export class SettlementService {
         if (this.isSettling) {
             return [{ success: false, error: 'Settlement already in progress' }];
         }
-
         this.isSettling = true;
         const results: SettlementResult[] = [];
 
         try {
-            // Get all pending transactions
             const allPending = await storage.getPendingTransactions();
             const pendingTxs = allPending.filter(tx => tx.status === 'pending');
 
             if (pendingTxs.length === 0) {
-                this.isSettling = false;
                 return results;
             }
 
@@ -72,34 +73,22 @@ export class SettlementService {
 
                 let result: SettlementResult;
                 if (tx.type === 'sent') {
-                    result = await this.settleSentTransactionWithRetry(tx, mainWallet);
+                    result = await this.settleSentWithRetry(tx);
                 } else {
-                    result = await this.settleReceivedTransaction(tx, mainWallet);
+                    result = await this.settleReceivedWithRetry(tx, mainWallet);
                 }
-
                 result.transactionId = tx.id;
                 results.push(result);
 
-                // Small delay to prevent rate limits
-                if (result.success) {
-                    await delay(1000);
-                }
+                if (result.success) await delay(500);
             }
 
-            // Update offline balances after settlement
             await this.recalculateOfflineBalances();
 
-            onProgress?.(
-                pendingTxs.length,
-                pendingTxs.length,
-                'Settlement complete'
-            );
+            onProgress?.(pendingTxs.length, pendingTxs.length, 'Settlement complete');
         } catch (error) {
             console.error('Settlement error:', error);
-            results.push({
-                success: false,
-                error: (error as Error).message,
-            });
+            results.push({ success: false, error: (error as Error).message });
         } finally {
             this.isSettling = false;
         }
@@ -108,208 +97,152 @@ export class SettlementService {
     }
 
     /**
-     * Settle a 'sent' transaction with retry logic
+     * SENT path: confirm the voucher has been claimed (or, for a direct
+     * online transfer, confirm the broadcast tx).
      */
-    private async settleSentTransactionWithRetry(
-        tx: PendingTransaction,
-        wallet: ethers.HDNodeWallet | ethers.Wallet
-    ): Promise<SettlementResult> {
-        let lastError: Error | null = null;
-
+    private async settleSentWithRetry(tx: PendingTransaction): Promise<SettlementResult> {
         for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
-            const result = await this.settleSentTransaction(tx, wallet);
-
-            if (result.success) {
-                return { ...result, retries: attempt };
-            }
-
-            lastError = new Error(result.error);
-
-            // Don't retry if it's a permanent failure
-            if (result.error?.includes('insufficient funds') ||
-                result.error?.includes('Insufficient ETH')) {
-                return result;
-            }
-
-            // Exponential backoff
+            const result = await this.settleSent(tx);
+            if (result.success) return { ...result, retries: attempt };
             if (attempt < this.config.maxRetries - 1) {
-                const backoffMs = this.config.retryDelayMs * Math.pow(2, attempt);
-                console.log(`Settlement attempt ${attempt + 1} failed, retrying in ${backoffMs}ms...`);
-                await delay(backoffMs);
+                await delay(this.config.retryDelayMs * Math.pow(2, attempt));
             }
         }
-
-        return {
-            success: false,
-            error: lastError?.message || 'Max retries exceeded',
-            retries: this.config.maxRetries,
-        };
+        return { success: false, error: 'Max retries exceeded', retries: this.config.maxRetries };
     }
 
-    /**
-     * Settle a 'sent' transaction by broadcasting it to the blockchain
-     */
-    private async settleSentTransaction(
-        tx: PendingTransaction,
-        wallet: ethers.HDNodeWallet | ethers.Wallet
-    ): Promise<SettlementResult> {
+    private async settleSent(tx: PendingTransaction): Promise<SettlementResult> {
         try {
-            // Determine token address
-            let tokenAddress = '';
-            const symbol = tx.voucherData?.token || 'USDC';
-
-            if (symbol === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
-            else if (symbol === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
-            else tokenAddress = USDC_CONTRACT_ADDRESS;
-
-            // Check if we have gas
-            const hasGas = await blockchain.hasEnoughGas(wallet.address);
-            if (!hasGas) {
-                return { success: false, error: 'Insufficient ETH for gas' };
+            // Voucher-based send: check if the receiver has claimed it on-chain.
+            if (tx.voucher) {
+                const av = escrow.isAvailable();
+                if (!av.available) {
+                    return { success: false, error: 'Escrow not configured locally' };
+                }
+                // Read the usedNonce flag from the contract directly.
+                const contract = new ethers.Contract(
+                    av.address!,
+                    ['function usedNonce(address sender, bytes32 nonce) view returns (bool)'],
+                    blockchain.getProvider()
+                );
+                const claimed = await contract.usedNonce(tx.voucher.from, tx.voucher.nonce);
+                if (!claimed) {
+                    return { success: false, error: 'Receiver has not claimed yet' };
+                }
+                // Mark settled. We don't have the claim's tx hash from this view,
+                // but we can search the chain for the Claimed event next time we sync.
+                await storage.updatePendingTransaction(tx.id, { status: 'settled' });
+                return { success: true };
             }
 
-            // Broadcast transaction
-            const txResponse = await blockchain.transferERC20(
-                wallet as any,
-                tokenAddress,
-                tx.to,
-                tx.amount
-            );
+            // Direct online transfer that didn't finish confirming earlier.
+            if (tx.txHash) {
+                const receipt = await blockchain.getTransactionReceipt(tx.txHash);
+                if (receipt && receipt.status === 1) {
+                    await storage.updatePendingTransaction(tx.id, { status: 'settled' });
+                    return { success: true, txHash: tx.txHash };
+                }
+                if (receipt && receipt.status === 0) {
+                    await storage.updatePendingTransaction(tx.id, { status: 'failed' });
+                    return { success: false, error: 'Transaction reverted on-chain' };
+                }
+                return { success: false, error: 'Transaction not yet confirmed' };
+            }
 
-            // Wait/Confirm? Just broadcast is enough to mark 'settled' locally, 
-            // but waiting ensures valid hash.
-            await txResponse.wait(1);
-
-            // Update storage
-            await storage.updatePendingTransaction(tx.id, {
-                status: 'settled',
-                txHash: txResponse.hash,
-            });
-
-            // Update Firebase
-            await firebase.initialize();
-            await firebase.addPendingTransaction({
-                ...tx,
-                status: 'settled',
-                settledTxHash: txResponse.hash,
-            } as any);
-
-            return { success: true, txHash: txResponse.hash };
-
+            return { success: false, error: 'No voucher or tx hash to settle against' };
         } catch (error) {
             console.error('Failed to settle sent transaction:', error);
-
-            // If it fails permanently (e.g. insufficient funds), mark failed?
-            // Or keep pending to retry?
-            // For now, if generic error, keep pending.
             return { success: false, error: (error as Error).message };
         }
     }
 
     /**
-     * Settle a 'received' transaction by verifying it on-chain
+     * RECEIVED path: submit the voucher to the escrow contract so funds
+     * move from sender's locked budget to receiver's wallet.
      */
-    private async settleReceivedTransaction(
+    private async settleReceivedWithRetry(
         tx: PendingTransaction,
-        mainWallet: ethers.HDNodeWallet | ethers.Wallet
+        wallet: ethers.HDNodeWallet | ethers.Wallet
+    ): Promise<SettlementResult> {
+        for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
+            const result = await this.settleReceived(tx, wallet);
+            if (result.success) return { ...result, retries: attempt };
+            if (result.error?.includes('NonceAlreadyUsed') ||
+                result.error?.includes('InvalidSignature') ||
+                result.error?.includes('VoucherExpired')) {
+                // Permanent failures — don't retry.
+                await storage.updatePendingTransaction(tx.id, { status: 'failed' });
+                return result;
+            }
+            if (attempt < this.config.maxRetries - 1) {
+                await delay(this.config.retryDelayMs * Math.pow(2, attempt));
+            }
+        }
+        return { success: false, error: 'Max retries exceeded', retries: this.config.maxRetries };
+    }
+
+    private async settleReceived(
+        tx: PendingTransaction,
+        wallet: ethers.HDNodeWallet | ethers.Wallet
     ): Promise<SettlementResult> {
         try {
-            if (!tx.from || !tx.amount) {
-                return { success: false, error: 'Invalid transaction data' };
+            if (!tx.voucher) {
+                return { success: false, error: 'Received tx has no voucher to claim' };
+            }
+            const av = escrow.isAvailable();
+            if (!av.available) {
+                return { success: false, error: 'Escrow not configured' };
             }
 
-            // Determine token address
-            let tokenAddress = '';
-            const symbol = tx.voucherData?.token || 'USDC';
-            if (symbol === 'EURC') tokenAddress = EURC_CONTRACT_ADDRESS;
-            else if (symbol === 'cbBTC') tokenAddress = CBBTC_CONTRACT_ADDRESS;
-            else tokenAddress = USDC_CONTRACT_ADDRESS;
-
-            // Look for matching on-chain transaction.
-            const recentTxs = await blockchain.getRecentERC20Transactions(
-                tokenAddress,
-                mainWallet.address,
-                20
-            );
-
-            // Don't double-link to a chain tx that's already claimed by another local pending entry.
-            const allPending = await storage.getPendingTransactions();
-            const alreadyLinkedHashes = new Set(
-                allPending
-                    .filter(p => p.id !== tx.id && p.txHash)
-                    .map(p => p.txHash!.toLowerCase())
-            );
-
-            // Match logic: same sender + same amount + earliest unclaimed chain tx within
-            // the voucher's validity window. The voucher has a unique nonce, but the chain
-            // tx itself doesn't carry it — so we still match (sender, amount) and use the
-            // unclaimed-hash filter to prevent two pending vouchers grabbing the same on-chain tx.
-            const sameAmount = (a: string, b: string) =>
-                Math.abs(parseFloat(a) - parseFloat(b)) < 0.000001;
-
-            const match = recentTxs.find(chainTx =>
-                chainTx.type === 'received' &&
-                chainTx.from.toLowerCase() === tx.from.toLowerCase() &&
-                sameAmount(chainTx.amount, tx.amount) &&
-                !alreadyLinkedHashes.has(chainTx.hash.toLowerCase())
-            );
-
-            if (match) {
-                // Found it! Mark settled.
-                await storage.updatePendingTransaction(tx.id, {
-                    status: 'settled',
-                    txHash: match.hash,
-                });
-
-                // Update Firebase
-                try {
-                    await firebase.initialize();
-                    await firebase.markAsSettled(tx.id, match.hash);
-                } catch (e) {
-                    console.warn('Failed to update Firebase:', e);
+            // Quote first so we surface specific failure reasons cheaply.
+            const quote = await escrow.quoteClaim(tx.voucher);
+            if (!quote.claimable) {
+                if (quote.reason === 'nonce_used') {
+                    // Someone else (or us in a prior attempt) already claimed.
+                    await storage.updatePendingTransaction(tx.id, { status: 'settled' });
+                    return { success: true, error: 'already_claimed' };
                 }
-
-                return { success: true, txHash: match.hash };
-            } else {
-                // Not found yet. Keep pending.
-                return { success: false, error: 'Transaction not found on-chain yet' };
+                return { success: false, error: quote.reason };
             }
 
+            // Receiver pays gas for their own claim. Could be relayed in future.
+            const hasGas = await blockchain.hasEnoughGas(wallet.address);
+            if (!hasGas) return { success: false, error: 'Insufficient ETH for gas' };
+
+            const txResp = await escrow.claim(wallet, tx.voucher);
+            await txResp.wait(1);
+
+            await storage.updatePendingTransaction(tx.id, {
+                status: 'settled',
+                txHash: txResp.hash,
+            });
+
+            try {
+                await firebase.initialize();
+                await firebase.markAsSettled(tx.id, txResp.hash);
+            } catch (e) {
+                console.warn('Failed to update Firebase:', e);
+            }
+
+            return { success: true, txHash: txResp.hash };
         } catch (error) {
             return { success: false, error: (error as Error).message };
         }
     }
 
-    /**
-     * Recalculate offline balances based on pending transactions
-     */
     private async recalculateOfflineBalances(): Promise<void> {
         const pendingTxs = await storage.getPendingTransactions();
-
         let sentTotal = 0;
         let receivedTotal = 0;
-
         for (const tx of pendingTxs) {
             if (tx.status !== 'pending') continue;
-
             const amount = parseFloat(tx.amount);
-
-            if (tx.type === 'sent') {
-                sentTotal += amount;
-            } else if (tx.type === 'received') {
-                receivedTotal += amount;
-            }
+            if (tx.type === 'sent') sentTotal += amount;
+            else if (tx.type === 'received') receivedTotal += amount;
         }
-
-        await storage.updateOfflineBalances(
-            sentTotal.toString(),
-            receivedTotal.toString()
-        );
+        await storage.updateOfflineBalances(sentTotal.toString(), receivedTotal.toString());
     }
 
-    /**
-     * Sync with Firebase to check settlement status
-     */
     async syncWithFirebase(address: string): Promise<void> {
         if (!firebase.isInitialized()) return;
 
@@ -317,33 +250,24 @@ export class SettlementService {
             const firestoreTxs = await firebase.getPendingTransactions(address);
             const localTxs = await storage.getPendingTransactions();
 
-            // Update local transactions based on Firestore data
             for (const firestoreTx of firestoreTxs) {
                 const localTx = localTxs.find((tx) => tx.id === firestoreTx.id);
-
                 if (localTx && localTx.status !== firestoreTx.status) {
-                    // Update local status
                     await storage.updatePendingTransaction(firestoreTx.id, {
                         status: firestoreTx.status as 'pending' | 'settled' | 'failed',
                         txHash: firestoreTx.settledTxHash,
                     });
                 }
             }
-
-            // Recalculate balances
             await this.recalculateOfflineBalances();
         } catch (error) {
             console.error('Error syncing with Firebase:', error);
         }
     }
 
-    /**
-     * Check if settlement is in progress
-     */
     isInProgress(): boolean {
         return this.isSettling;
     }
 }
 
-// Singleton instance
 export const settlement = new SettlementService();

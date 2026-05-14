@@ -38,14 +38,18 @@ export interface FirestorePendingTransaction {
     claimDeviceId?: string;
     settledTxHash?: string;
     settledAt?: Timestamp;
-    voucherData: {
+    // Voucher payload (escrow v3) if this row originated from an offline transfer.
+    voucher?: {
         version: number;
-        privateKey: string;
-        amount: string;
         from: string;
         to: string;
-        timestamp: number;
+        token: string;
+        amount: string;
+        nonce: string;
+        deadline: number;
         signature: string;
+        chainId: number;
+        escrowAddress: string;
     };
 }
 
