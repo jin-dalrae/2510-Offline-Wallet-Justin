@@ -216,6 +216,64 @@ async function main() {
         'InsufficientBalance'
     );
 
+    // ===== ERC-1271 smart-wallet signature =====
+    console.log('\n--- smart wallet (EIP-1271) ---');
+    const SmartWallet = await ethers.getContractFactory('MockSmartWallet');
+    const smartWallet = await SmartWallet.deploy(alice.address);
+    await smartWallet.waitForDeployment();
+    const smartWalletAddr = await smartWallet.getAddress();
+
+    // Fund the smart wallet with USDC, then have it approve+deposit into escrow.
+    await token.mint(smartWalletAddr, USDC(50));
+    const erc20 = await ethers.getContractAt('MockUSDC', tokenAddr);
+    await (await smartWallet.connect(alice).approve(tokenAddr, escrowAddr, USDC(50))).wait();
+    const depositData = erc20.interface.encodeFunctionData('balanceOf', [smartWalletAddr]);
+    void depositData; // silence unused warning
+    const escrowIface = (await ethers.getContractFactory('OfflineEscrow')).interface;
+    const depCall = escrowIface.encodeFunctionData('deposit', [tokenAddr, USDC(50)]);
+    await (await smartWallet.connect(alice).exec(escrowAddr, depCall)).wait();
+    assert(
+        (await escrow.balanceOf(smartWalletAddr, tokenAddr)) === USDC(50),
+        'smart wallet can deposit into escrow'
+    );
+
+    // Alice (the smart-wallet owner) signs an EIP-712 voucher claiming
+    // FROM the smart wallet's address. SignatureChecker should call
+    // smartWallet.isValidSignature, recover Alice, and accept.
+    const swNonce = ethers.hexlify(ethers.randomBytes(32));
+    const swVoucher = {
+        from: smartWalletAddr,
+        to: bob.address,
+        token: tokenAddr,
+        amount: USDC(12),
+        nonce: swNonce,
+        deadline,
+    };
+    const swSig = await signVoucher(escrow, alice, swVoucher);
+    const bobBeforeSw = await token.balanceOf(bob.address);
+    await (
+        await escrow.claim(
+            swVoucher.from, swVoucher.to, swVoucher.token,
+            swVoucher.amount, swVoucher.nonce, swVoucher.deadline, swSig
+        )
+    ).wait();
+    assert(
+        (await token.balanceOf(bob.address)) === bobBeforeSw + USDC(12),
+        'smart-wallet voucher claims via EIP-1271 path'
+    );
+
+    // Reject when the owner doesn't match — eve signs on behalf of the smart wallet
+    const swForgedNonce = ethers.hexlify(ethers.randomBytes(32));
+    const swForged = { ...swVoucher, nonce: swForgedNonce };
+    const eveSig2 = await signVoucher(escrow, eve, swForged);
+    await assertReverts(
+        () => escrow.claim(
+            swForged.from, swForged.to, swForged.token,
+            swForged.amount, swForged.nonce, swForged.deadline, eveSig2
+        ),
+        'InvalidSignature'
+    );
+
     // ===== quoteClaim =====
     console.log('\n--- quoteClaim ---');
     const probeNonce = ethers.hexlify(ethers.randomBytes(32));

@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
@@ -27,6 +27,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *  - Cross-contract / cross-chain replay impossible: EIP-712 domain separator
  *    binds the signature to (name, version, chainId, this contract).
  *  - Expired vouchers can't be claimed: deadline check.
+ *
+ * Wallet compatibility:
+ *  Uses OpenZeppelin's SignatureChecker, which transparently supports both
+ *  EOA signatures (recovered via ECDSA) and smart-wallet signatures verified
+ *  by the wallet contract's own ERC-1271 isValidSignature() callback. This
+ *  means Coinbase Smart Wallet, Safe, and other smart-contract wallets can
+ *  sign vouchers without modification to this contract.
  */
 contract OfflineEscrow is EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -116,8 +123,9 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
             abi.encode(VOUCHER_TYPEHASH, from, to, address(token), amount, nonce, deadline)
         );
         bytes32 digest = _hashTypedDataV4(structHash);
-        address recovered = ECDSA.recover(digest, signature);
-        if (recovered != from) revert InvalidSignature();
+        if (!SignatureChecker.isValidSignatureNow(from, digest, signature)) {
+            revert InvalidSignature();
+        }
 
         uint256 current = balanceOf[from][address(token)];
         if (current < amount) revert InsufficientBalance();
@@ -151,8 +159,9 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
             abi.encode(VOUCHER_TYPEHASH, from, to, address(token), amount, nonce, deadline)
         );
         bytes32 digest = _hashTypedDataV4(structHash);
-        address recovered = ECDSA.recover(digest, signature);
-        if (recovered != from) return (false, "bad_signature");
+        if (!SignatureChecker.isValidSignatureNow(from, digest, signature)) {
+            return (false, "bad_signature");
+        }
 
         return (true, "ok");
     }
