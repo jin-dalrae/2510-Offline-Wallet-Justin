@@ -1,68 +1,111 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { WalletManager } from '../lib/wallet';
 import { storage } from '../lib/storage';
-import { ethers } from 'ethers';
+import { JustinSigner, WalletKind } from '../lib/signer';
+import {
+    connectSmartWallet,
+    restoreSmartWalletSession,
+    disconnectSmartWallet,
+} from '../lib/smartWallet';
 
-// sessionStorage holds the password for the current tab session only.
-// It clears automatically when the tab is closed. This is the auto-unlock
-// mechanism on reload — never a hardcoded fallback.
+// Session-only cache: lets us re-unlock an EOA wallet on tab reload without
+// re-prompting for the password. Cleared automatically when the tab closes.
 const SESSION_PASSWORD_KEY = 'wallet_session_password';
-// localStorage signal so other tabs in the same browser session can notice
-// login/logout. Does NOT contain credentials.
+// Cross-tab login/logout signal (no credentials in this one).
 const SESSION_FLAG_KEY = 'wallet_session_active';
+// Sticky flag for which wallet kind to prefer on next restore.
+const KIND_FLAG_KEY = 'wallet_kind';
 
 export interface WalletState {
     isInitialized: boolean;
     isUnlocked: boolean;
+    kind: WalletKind | null;
     address: string | null;
     accountName: string | null;
     profilePicture: string | null;
-    walletManager: WalletManager | null;
+    // The active signer when isUnlocked. Held in a ref to avoid stale-closure
+    // issues; consumers should call getSigner() rather than reading from state.
 }
 
 const INITIAL_STATE: WalletState = {
     isInitialized: false,
     isUnlocked: false,
+    kind: null,
     address: null,
     accountName: null,
     profilePicture: null,
-    walletManager: null,
 };
 
 export function useWallet() {
     const [state, setState] = useState<WalletState>(INITIAL_STATE);
     const hasAutoUnlocked = useRef(false);
 
-    const applyUnlocked = useCallback(
+    // Hold the active signer in a ref to keep references stable across renders.
+    const signerRef = useRef<JustinSigner | null>(null);
+    // EOA-only: keep the WalletManager so we can re-lock cleanly on logout.
+    const eoaManagerRef = useRef<WalletManager | null>(null);
+
+    const applyEoa = useCallback(
         (
             walletData: { address: string; accountName?: string; profilePicture?: string },
-            walletManager: WalletManager
+            wm: WalletManager
         ) => {
+            eoaManagerRef.current = wm;
+            signerRef.current = wm.getWallet();
+            localStorage.setItem(KIND_FLAG_KEY, 'eoa');
             setState({
                 isInitialized: true,
                 isUnlocked: true,
+                kind: 'eoa',
                 address: walletData.address,
                 accountName: walletData.accountName ?? 'My Wallet',
                 profilePicture: walletData.profilePicture ?? null,
-                walletManager,
             });
         },
         []
     );
 
-    // On mount: load wallet metadata; auto-unlock if a session password exists.
+    const applySmart = useCallback(
+        (address: string, signer: JustinSigner) => {
+            eoaManagerRef.current = null;
+            signerRef.current = signer;
+            localStorage.setItem(KIND_FLAG_KEY, 'smart');
+            setState({
+                isInitialized: true,
+                isUnlocked: true,
+                kind: 'smart',
+                address,
+                accountName: 'Smart Wallet',
+                profilePicture: null,
+            });
+        },
+        []
+    );
+
+    // On mount: try to restore the previously-active wallet without prompting.
+    // Order: smart wallet (silent) → EOA (via cached session password) → locked.
     useEffect(() => {
         let cancelled = false;
 
-        const init = async () => {
+        const restore = async () => {
             try {
                 await storage.init();
-                const walletData = await storage.getWallet();
+                const preferredKind = localStorage.getItem(KIND_FLAG_KEY) as WalletKind | null;
 
-                if (!walletData) {
-                    if (!cancelled) {
-                        setState({ ...INITIAL_STATE, isInitialized: true });
+                // 1. Smart wallet session can be restored silently if it exists.
+                if (preferredKind === 'smart' || preferredKind === null) {
+                    const smart = await restoreSmartWalletSession();
+                    if (smart && !cancelled) {
+                        applySmart(smart.address, smart.signer);
+                        return;
                     }
+                    // If we expected smart but it's gone, fall through to EOA check.
+                }
+
+                // 2. EOA path: any local wallet data we can auto-unlock?
+                const walletData = await storage.getWallet();
+                if (!walletData) {
+                    if (!cancelled) setState({ ...INITIAL_STATE, isInitialized: true });
                     return;
                 }
 
@@ -72,10 +115,10 @@ export function useWallet() {
                     try {
                         const wm = new WalletManager();
                         await wm.unlock(walletData.encryptedPrivateKey, sessionPassword);
-                        if (!cancelled) applyUnlocked(walletData, wm);
+                        if (!cancelled) applyEoa(walletData, wm);
                         return;
                     } catch (err) {
-                        console.warn('Auto-unlock failed, clearing session', err);
+                        console.warn('EOA auto-unlock failed, clearing session', err);
                         sessionStorage.removeItem(SESSION_PASSWORD_KEY);
                         localStorage.removeItem(SESSION_FLAG_KEY);
                     }
@@ -85,40 +128,41 @@ export function useWallet() {
                     setState({
                         isInitialized: true,
                         isUnlocked: false,
+                        kind: null,
                         address: walletData.address,
                         accountName: walletData.accountName ?? 'My Wallet',
                         profilePicture: walletData.profilePicture ?? null,
-                        walletManager: null,
                     });
                 }
             } catch (error) {
-                console.error('Error checking wallet:', error);
+                console.error('Error restoring wallet:', error);
                 if (!cancelled) setState({ ...INITIAL_STATE, isInitialized: true });
             }
         };
 
-        init();
+        restore();
         return () => {
             cancelled = true;
         };
-    }, [applyUnlocked]);
+    }, [applyEoa, applySmart]);
 
-    // Cross-tab logout: if another tab clears the session flag, lock this tab too.
+    // Cross-tab logout: if another tab clears the session flag, lock here too.
     useEffect(() => {
-        const handleStorage = (event: StorageEvent) => {
+        const handler = (event: StorageEvent) => {
             if (event.key === SESSION_FLAG_KEY && event.newValue === null) {
-                state.walletManager?.lock();
+                eoaManagerRef.current?.lock();
+                signerRef.current = null;
                 sessionStorage.removeItem(SESSION_PASSWORD_KEY);
-                setState((prev) => ({ ...prev, isUnlocked: false, walletManager: null }));
+                setState((prev) => ({ ...prev, isUnlocked: false, kind: null }));
             }
         };
-        window.addEventListener('storage', handleStorage);
-        return () => window.removeEventListener('storage', handleStorage);
-    }, [state.walletManager]);
+        window.addEventListener('storage', handler);
+        return () => window.removeEventListener('storage', handler);
+    }, []);
 
     /**
-     * Create a brand-new wallet entry from a private key, encrypted with the user's password.
-     * Replaces any existing wallet on the device.
+     * Sign up flow: create a brand-new EOA wallet from a private key,
+     * encrypted with the user's chosen password.
      */
     const createWallet = useCallback(
         async (accountName: string, privateKey: string, password: string): Promise<void> => {
@@ -127,7 +171,6 @@ export function useWallet() {
             const wallet = WalletManager.fromPrivateKey(privateKey);
             const encryptedPrivateKey = await WalletManager.encryptPrivateKey(privateKey, password);
 
-            // Reset any prior wallet on this device so there's exactly one record.
             await storage.deleteActiveWallet();
             const walletId = await storage.addWallet(wallet.address, encryptedPrivateKey, accountName);
             await storage.setActiveWallet(walletId);
@@ -138,17 +181,12 @@ export function useWallet() {
             sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
             localStorage.setItem(SESSION_FLAG_KEY, 'true');
 
-            applyUnlocked(
-                { address: wallet.address, accountName, profilePicture: undefined },
-                wm
-            );
+            applyEoa({ address: wallet.address, accountName, profilePicture: undefined }, wm);
         },
-        [applyUnlocked]
+        [applyEoa]
     );
 
-    /**
-     * Sign in with a stored wallet (decrypt with the provided password).
-     */
+    /** Sign in with the stored EOA wallet using its password. */
     const unlockWithPassword = useCallback(
         async (password: string): Promise<void> => {
             if (!password) throw new Error('Password is required');
@@ -161,44 +199,60 @@ export function useWallet() {
             sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
             localStorage.setItem(SESSION_FLAG_KEY, 'true');
 
-            applyUnlocked(walletData, wm);
+            applyEoa(walletData, wm);
         },
-        [applyUnlocked]
+        [applyEoa]
     );
 
-    /**
-     * Import a wallet from private key or mnemonic + a new password.
-     * The password is what will be used to unlock the wallet on this device going forward.
-     */
+    /** Import a wallet from a private key or mnemonic, encrypted with a new password. */
     const importWallet = useCallback(
         async (keyOrMnemonic: string, password: string, accountName = 'Imported Wallet'): Promise<void> => {
             if (!password) throw new Error('Password is required');
-
             const wallet = keyOrMnemonic.trim().includes(' ')
                 ? WalletManager.fromMnemonic(keyOrMnemonic.trim())
                 : WalletManager.fromPrivateKey(keyOrMnemonic.trim());
-
             await createWallet(accountName, wallet.privateKey, password);
         },
         [createWallet]
     );
 
-    const logout = useCallback(() => {
-        state.walletManager?.lock();
+    /**
+     * Connect (or create) a Coinbase Smart Wallet via Face ID. The SDK
+     * handles passkey creation, ERC-4337 deployment, and session
+     * persistence. We just receive an address + signer.
+     */
+    const connectSmart = useCallback(async (): Promise<void> => {
+        const { address, signer } = await connectSmartWallet();
+        applySmart(address, signer);
+    }, [applySmart]);
+
+    const logout = useCallback(async () => {
+        eoaManagerRef.current?.lock();
+        if (state.kind === 'smart') {
+            await disconnectSmartWallet().catch(() => undefined);
+        }
+        signerRef.current = null;
+        eoaManagerRef.current = null;
         sessionStorage.removeItem(SESSION_PASSWORD_KEY);
         localStorage.removeItem(SESSION_FLAG_KEY);
-        setState((prev) => ({ ...prev, isUnlocked: false, walletManager: null }));
-    }, [state.walletManager]);
+        localStorage.removeItem(KIND_FLAG_KEY);
+        setState((prev) => ({ ...prev, isUnlocked: false, kind: null }));
+    }, [state.kind]);
 
-    const getWallet = useCallback((): ethers.HDNodeWallet | ethers.Wallet => {
-        if (!state.walletManager || !state.isUnlocked) {
+    /**
+     * Return the active signer. Throws if no wallet is unlocked.
+     */
+    const getSigner = useCallback((): JustinSigner => {
+        if (!signerRef.current || !state.isUnlocked) {
             throw new Error('Wallet is locked');
         }
-        return state.walletManager.getWallet();
-    }, [state.walletManager, state.isUnlocked]);
+        return signerRef.current;
+    }, [state.isUnlocked]);
 
     const updateProfile = useCallback(
         async (name?: string, picture?: string | null) => {
+            // Profile metadata is stored locally; only meaningful for EOA wallets.
+            if (state.kind !== 'eoa') return;
             await storage.updateWalletProfile(name, picture === null ? null : picture);
             setState((prev) => ({
                 ...prev,
@@ -206,7 +260,7 @@ export function useWallet() {
                 ...(picture !== undefined && { profilePicture: picture ?? null }),
             }));
         },
-        []
+        [state.kind]
     );
 
     return {
@@ -214,8 +268,11 @@ export function useWallet() {
         createWallet,
         unlockWithPassword,
         importWallet,
+        connectSmart,
         logout,
-        getWallet,
+        getSigner,
+        /** @deprecated use getSigner() */
+        getWallet: getSigner,
         updateProfile,
     };
 }

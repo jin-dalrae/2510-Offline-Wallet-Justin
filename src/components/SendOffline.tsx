@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { JustinSigner } from "../lib/signer";
 import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
@@ -31,7 +32,7 @@ const TOKEN_DECIMALS: Record<'USDC' | 'EURC' | 'cbBTC', number> = {
 };
 
 interface SendOfflineProps {
-    wallet: ethers.HDNodeWallet | ethers.Wallet;
+    wallet: JustinSigner;
     balance: BalanceState;
     isOnline: boolean;
     onClose: () => void;

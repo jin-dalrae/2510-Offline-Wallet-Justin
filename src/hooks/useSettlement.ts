@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { JustinSigner } from '../lib/signer';
 import { settlement, SettlementResult } from '../lib/settlement';
 import { firebase } from '../lib/firebase';
-import { ethers } from 'ethers';
 import toast from 'react-hot-toast';
+// settlement.settlePendingTransactions accepts a JustinSigner directly.
 
 export interface SettlementState {
     isSettling: boolean;
@@ -12,7 +13,7 @@ export interface SettlementState {
 
 export function useSettlement(
     address: string | null,
-    getWallet: () => ethers.HDNodeWallet | ethers.Wallet,
+    getWallet: () => JustinSigner,
     isOnline: boolean
 ) {
     const [state, setState] = useState<SettlementState>({

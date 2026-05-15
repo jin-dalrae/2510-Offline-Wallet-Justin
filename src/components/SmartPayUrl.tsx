@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { JustinSigner } from "../lib/signer";
 import { ethers } from 'ethers';
 import { agentService, AgentSession, AgentMessage } from '../lib/agentService';
 import { X402PaymentRequest } from '../lib/x402';
@@ -7,7 +8,7 @@ import toast from 'react-hot-toast';
 import { BalanceState } from '../hooks/useBalance';
 
 interface SmartPayUrlProps {
-    wallet: ethers.HDNodeWallet | ethers.Wallet;
+    wallet: JustinSigner;
     balance: BalanceState;
     onClose: () => void;
     onPaymentComplete?: (txHash: string) => void;
@@ -73,7 +74,14 @@ export function SmartPayUrl({ wallet, balance, onClose, onPaymentComplete }: Sma
                     toast.error(result.error);
                 }
             } else {
-                // Direct x402 check using official SDK
+                // Direct x402 check using official SDK. x402's EIP-3009 flow
+                // needs a raw private key, which Coinbase Smart Wallets don't
+                // expose — so this path is EOA-only.
+                if (wallet instanceof ethers.JsonRpcSigner) {
+                    toast.error('Smart Pay (x402) is not available for Smart Wallets yet. Use the AI agent mode instead.');
+                    setIsLoading(false);
+                    return;
+                }
                 const { createX402Service } = await import('../lib/x402');
                 const x402 = createX402Service(wallet);
                 const result = await x402.checkUrl(targetUrl);

@@ -15,6 +15,7 @@
  */
 
 import { ethers } from 'ethers';
+import { JustinSigner, ensureSignerHasProvider } from './signer';
 import { blockchain, BASE_SEPOLIA_CONFIG } from './blockchain';
 
 const ESCROW_ABI = [
@@ -111,9 +112,11 @@ export class EscrowService {
     }
 
     /** Contract bound to a signer (for writes). */
-    private getWriteContract(wallet: ethers.HDNodeWallet | ethers.Wallet): ethers.Contract {
+    private getWriteContract(wallet: JustinSigner): ethers.Contract {
         if (!this.contractAddress) throw new Error('Escrow not configured');
-        const signer = wallet.connect(blockchain.getProvider());
+        // EOA wallets need a provider attached to broadcast; smart-wallet
+        // JsonRpcSigners are already bound to their own (UserOp) provider.
+        const signer = ensureSignerHasProvider(wallet, blockchain.getProvider());
         return new ethers.Contract(this.contractAddress, ESCROW_ABI, signer);
     }
 
@@ -142,7 +145,7 @@ export class EscrowService {
      * escrow contract for at least `amount` first.
      */
     async deposit(
-        wallet: ethers.HDNodeWallet | ethers.Wallet,
+        wallet: JustinSigner,
         token: string,
         amount: bigint
     ): Promise<ethers.TransactionResponse> {
@@ -153,7 +156,7 @@ export class EscrowService {
                 'function allowance(address owner, address spender) view returns (uint256)',
                 'function approve(address spender, uint256 amount) returns (bool)',
             ],
-            wallet.connect(blockchain.getProvider())
+            ensureSignerHasProvider(wallet, blockchain.getProvider())
         );
         const current = await tokenContract.allowance(wallet.address, this.contractAddress);
         if (current < amount) {
@@ -167,7 +170,7 @@ export class EscrowService {
 
     /** Pull funds back out of the escrow to the user's wallet. */
     async withdraw(
-        wallet: ethers.HDNodeWallet | ethers.Wallet,
+        wallet: JustinSigner,
         token: string,
         amount: bigint
     ): Promise<ethers.TransactionResponse> {
@@ -182,7 +185,7 @@ export class EscrowService {
      * Returns a VoucherV3 ready to encode for QR/BLE transport.
      */
     async signVoucher(params: {
-        wallet: ethers.HDNodeWallet | ethers.Wallet;
+        wallet: JustinSigner;
         to: string;
         token: string;
         amount: bigint;
@@ -296,7 +299,7 @@ export class EscrowService {
      * Funds always land at voucher.to.
      */
     async claim(
-        wallet: ethers.HDNodeWallet | ethers.Wallet,
+        wallet: JustinSigner,
         voucher: VoucherV3
     ): Promise<ethers.TransactionResponse> {
         const c = this.getWriteContract(wallet);

@@ -5,12 +5,13 @@ import toast from 'react-hot-toast';
 
 interface SignUpProps {
     onComplete: (accountName: string, privateKey: string, password: string) => void;
+    onSmartWallet: () => Promise<void>;
     onBack: () => void;
     onPrivacy: () => void;
     onTerms: () => void;
 }
 
-export function SignUp({ onComplete, onBack, onPrivacy, onTerms }: SignUpProps) {
+export function SignUp({ onComplete, onSmartWallet, onBack, onPrivacy, onTerms }: SignUpProps) {
     const [accountName, setAccountName] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -70,6 +71,21 @@ export function SignUp({ onComplete, onBack, onPrivacy, onTerms }: SignUpProps) 
     };
 
 
+    const handleSmartWalletClick = async () => {
+        if (!allAgreed) {
+            toast.error('Please agree to the Terms, Privacy Policy, and risk acknowledgement');
+            return;
+        }
+        setIsLoading(true);
+        try {
+            await onSmartWallet();
+        } catch {
+            // App-level handler surfaces the toast.
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleGoogleSignUp = async () => {
         if (!allAgreed) {
             toast.error('Please agree to the Terms, Privacy Policy, and risk acknowledgement');
@@ -123,7 +139,31 @@ export function SignUp({ onComplete, onBack, onPrivacy, onTerms }: SignUpProps) 
                 </button>
 
                 <h2 className="text-3xl font-serif font-bold mb-2 text-slate-900">Create Account</h2>
-                <p className="text-slate-500 mb-8 font-sans">Set up your secure username and password.</p>
+                <p className="text-slate-500 mb-8 font-sans">The fastest way is Face ID — no password, no recovery phrase.</p>
+
+                {/* Coinbase Smart Wallet (Passkey) — primary, recommended path */}
+                <button
+                    onClick={handleSmartWalletClick}
+                    disabled={isLoading || !allAgreed}
+                    className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-2xl shadow-lg hover:bg-slate-800 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 mb-3"
+                >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11V7a5 5 0 0110 0v4m-9 0h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2v-5a2 2 0 012-2z" />
+                    </svg>
+                    Create with Face ID
+                </button>
+                <p className="text-xs text-slate-400 text-center mb-6">
+                    Coinbase Smart Wallet · gas-free · works offline · no seed phrase
+                </p>
+
+                <div className="relative mb-6">
+                    <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-slate-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                        <span className="px-4 bg-white/80 text-slate-500 font-medium">Or use another method</span>
+                    </div>
+                </div>
 
                 {/* Google Sign Up Button */}
                 <button

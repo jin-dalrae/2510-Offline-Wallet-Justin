@@ -137,6 +137,17 @@ function App() {
         }
     };
 
+    const handleSmartWallet = async () => {
+        try {
+            await wallet.connectSmart();
+            toast.success('Smart Wallet connected!');
+            navigate('/dashboard');
+        } catch (error) {
+            console.error('Smart Wallet error:', error);
+            toast.error((error as Error).message || 'Failed to connect Smart Wallet');
+        }
+    };
+
     const handleSendSuccess = () => {
         refreshBalance();
         toast.success('Offline payment sent!');
@@ -189,6 +200,7 @@ function App() {
                     element={
                         <SignUp
                             onComplete={handleSignUp}
+                            onSmartWallet={handleSmartWallet}
                             onBack={() => navigate('/')}
                             onPrivacy={() => navigate('/privacy')}
                             onTerms={() => navigate('/terms')}

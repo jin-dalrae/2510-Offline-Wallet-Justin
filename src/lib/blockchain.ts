@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { JustinSigner, ensureSignerHasProvider } from './signer';
 
 /**
  * Pick the best available RPC URL for Base Sepolia. Priority:
@@ -136,11 +137,11 @@ export class BlockchainService {
      * Transfer USDC
      */
     async transferUSDC(
-        wallet: ethers.Wallet,
+        wallet: JustinSigner,
         to: string,
         amount: string
     ): Promise<ethers.TransactionResponse> {
-        const signer = wallet.connect(this.provider);
+        const signer = ensureSignerHasProvider(wallet, this.provider);
         const contract = this.getUSDCContract(signer);
 
         const decimals = await contract.decimals();
@@ -154,12 +155,12 @@ export class BlockchainService {
      * Transfer any ERC20 token
      */
     async transferERC20(
-        wallet: ethers.Wallet,
+        wallet: JustinSigner,
         tokenAddress: string,
         to: string,
         amount: string
     ): Promise<ethers.TransactionResponse> {
-        const signer = wallet.connect(this.provider);
+        const signer = ensureSignerHasProvider(wallet, this.provider);
         const contract = this.getERC20Contract(tokenAddress, signer);
 
         const decimals = await contract.decimals();

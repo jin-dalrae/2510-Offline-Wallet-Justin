@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { JustinSigner } from "./signer";
 import { storage, PendingTransaction } from './storage';
 import { blockchain } from './blockchain';
 import { escrow } from './escrow';
@@ -44,7 +45,7 @@ export class SettlementService {
     };
 
     async settlePendingTransactions(
-        mainWallet: ethers.HDNodeWallet | ethers.Wallet,
+        mainWallet: JustinSigner,
         onProgress?: (current: number, total: number, status: string) => void
     ): Promise<SettlementResult[]> {
         if (this.isSettling) {
@@ -162,7 +163,7 @@ export class SettlementService {
      */
     private async settleReceivedWithRetry(
         tx: PendingTransaction,
-        wallet: ethers.HDNodeWallet | ethers.Wallet
+        wallet: JustinSigner
     ): Promise<SettlementResult> {
         for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
             const result = await this.settleReceived(tx, wallet);
@@ -183,7 +184,7 @@ export class SettlementService {
 
     private async settleReceived(
         tx: PendingTransaction,
-        wallet: ethers.HDNodeWallet | ethers.Wallet
+        wallet: JustinSigner
     ): Promise<SettlementResult> {
         try {
             if (!tx.voucher) {

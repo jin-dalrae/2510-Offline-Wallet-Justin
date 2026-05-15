@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
+import { JustinSigner } from '../lib/signer';
 import { QRCodeSVG } from 'qrcode.react';
 import { BalanceState } from '../hooks/useBalance';
 import toast from 'react-hot-toast';
-import { ethers } from 'ethers';
 import { WalletList } from './WalletList';
 import { storage } from '../lib/storage';
 import { TransactionHistory } from './TransactionHistory';
@@ -16,7 +16,7 @@ interface NewDashboardProps {
     accountName: string;
     profilePicture: string | null;
     address: string;
-    wallet: ethers.HDNodeWallet | ethers.Wallet;
+    wallet: JustinSigner;
     balance: BalanceState;
     isOnline: boolean;
     onSettings: () => void;

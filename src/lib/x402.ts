@@ -16,6 +16,11 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { createWalletClient, http } from 'viem';
 import { baseSepolia } from 'viem/chains';
 
+// x402's EIP-3009 flow needs a raw private key for viem's local account.
+// That's EOA-only by construction — Coinbase Smart Wallets (passkey) cannot
+// expose a private key, so x402 Smart Pay is unavailable for smart wallets.
+type EoaWallet = ethers.HDNodeWallet | ethers.Wallet;
+
 // Import official x402 packages
 import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
@@ -49,7 +54,7 @@ export interface X402Config {
  * Create an x402-enabled fetch function for a wallet
  */
 export function createX402Fetch(
-    wallet: ethers.HDNodeWallet | ethers.Wallet,
+    wallet: EoaWallet,
     config: X402Config = {}
 ): typeof fetch {
     const rpcUrl = config.rpcUrl || 'https://sepolia.base.org';
@@ -88,11 +93,11 @@ export function createX402Fetch(
  * and fallback methods for servers that use non-standard headers.
  */
 export class X402Service {
-    private wallet: ethers.HDNodeWallet | ethers.Wallet;
+    private wallet: EoaWallet;
     private x402Fetch: typeof fetch;
 
     constructor(
-        wallet: ethers.HDNodeWallet | ethers.Wallet,
+        wallet: EoaWallet,
         config: X402Config = {}
     ) {
         this.wallet = wallet;
@@ -264,7 +269,7 @@ export class X402Service {
  * Create an X402Service instance
  */
 export function createX402Service(
-    wallet: ethers.HDNodeWallet | ethers.Wallet,
+    wallet: EoaWallet,
     config?: X402Config
 ): X402Service {
     return new X402Service(wallet, config);
