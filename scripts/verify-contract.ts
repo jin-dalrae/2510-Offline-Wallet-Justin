@@ -12,6 +12,16 @@ const { ethers } = await network.connect();
 const ONE_DAY = 24 * 60 * 60;
 const USDC = (n: number) => BigInt(n) * 10n ** 6n; // 6 decimals
 
+async function blockTime(): Promise<number> {
+    const b = await ethers.provider.getBlock('latest');
+    return Number(b!.timestamp);
+}
+
+async function increaseTime(seconds: number): Promise<void> {
+    await ethers.provider.send('evm_increaseTime', [seconds]);
+    await ethers.provider.send('evm_mine', []);
+}
+
 function assert(cond: any, msg: string) {
     if (!cond) {
         console.error(`❌ FAIL: ${msg}`);
@@ -79,8 +89,8 @@ async function main() {
     await token.mint(alice.address, USDC(1000));
     await token.connect(alice).approve(escrowAddr, USDC(1000));
 
-    // ===== deposit/withdraw =====
-    console.log('--- deposit / withdraw ---');
+    // ===== deposit + delayed-withdrawal request =====
+    console.log('--- deposit / withdrawal request ---');
     const depositTx = await escrow.connect(alice).deposit(tokenAddr, USDC(100));
     await depositTx.wait();
     assert(
@@ -88,21 +98,28 @@ async function main() {
         'deposit locks 100 USDC'
     );
 
-    await (await escrow.connect(alice).withdraw(tokenAddr, USDC(40))).wait();
-    assert(
-        (await escrow.balanceOf(alice.address, tokenAddr)) === USDC(60),
-        'withdraw 40 USDC, 60 remains'
-    );
-
+    // A withdrawal can be requested but not executed until the delay elapses.
+    await (await escrow.connect(alice).requestWithdrawal(tokenAddr, USDC(40))).wait();
     await assertReverts(
-        () => escrow.connect(alice).withdraw(tokenAddr, USDC(999)),
+        () => escrow.connect(alice).executeWithdrawal(tokenAddr),
+        'WithdrawalNotReady'
+    );
+    // Cancelling clears the request entirely.
+    await (await escrow.connect(alice).cancelWithdrawal(tokenAddr)).wait();
+    await assertReverts(
+        () => escrow.connect(alice).executeWithdrawal(tokenAddr),
+        'NoPendingWithdrawal'
+    );
+    // Can't request more than the locked balance; non-depositors can't either.
+    await assertReverts(
+        () => escrow.connect(alice).requestWithdrawal(tokenAddr, USDC(999)),
         'InsufficientBalance'
     );
-
     await assertReverts(
-        () => escrow.connect(bob).withdraw(tokenAddr, USDC(10)),
+        () => escrow.connect(bob).requestWithdrawal(tokenAddr, USDC(10)),
         'InsufficientBalance'
     );
+    // Alice's full 100 stays locked for the claim tests below.
 
     // ===== happy-path claim =====
     console.log('\n--- claim ---');
@@ -128,8 +145,8 @@ async function main() {
         'Bob receives 30 USDC'
     );
     assert(
-        (await escrow.balanceOf(alice.address, tokenAddr)) === USDC(30),
-        'Alice escrow drops to 30'
+        (await escrow.balanceOf(alice.address, tokenAddr)) === USDC(70),
+        'Alice escrow drops to 70 after 30 claimed'
     );
 
     // ===== nonce replay =====
@@ -297,6 +314,103 @@ async function main() {
         probeSig
     );
     assert(expOk === false && expReason === 'expired', 'quoteClaim flags expired voucher');
+
+    // ===== deadline cap (DeadlineTooFar) =====
+    console.log('\n--- deadline cap ---');
+    const maxTtl: bigint = await escrow.MAX_VOUCHER_TTL();
+    const farNonce = ethers.hexlify(ethers.randomBytes(32));
+    const farDeadline = BigInt(await blockTime()) + maxTtl + BigInt(ONE_DAY);
+    const farVoucher = {
+        from: alice.address, to: bob.address, token: tokenAddr,
+        amount: USDC(1), nonce: farNonce, deadline: farDeadline,
+    };
+    const farSig = await signVoucher(escrow, alice, farVoucher);
+    await assertReverts(
+        () => escrow.claim(
+            farVoucher.from, farVoucher.to, farVoucher.token,
+            farVoucher.amount, farVoucher.nonce, farVoucher.deadline, farSig
+        ),
+        'DeadlineTooFar'
+    );
+    const [farOk, farReason] = await escrow.quoteClaim(
+        farVoucher.from, farVoucher.to, farVoucher.token,
+        farVoucher.amount, farVoucher.nonce, farVoucher.deadline, farSig
+    );
+    assert(
+        farOk === false && farReason === 'deadline_too_far',
+        'quoteClaim flags deadline_too_far'
+    );
+
+    // ===== withdrawal timelock defeats a rug attempt =====
+    console.log('\n--- withdrawal timelock / anti-rug ---');
+    const WITHDRAW_DELAY: bigint = await escrow.WITHDRAW_DELAY();
+
+    await token.mint(relayer.address, USDC(100));
+    await token.connect(relayer).approve(escrowAddr, USDC(100));
+    await (await escrow.connect(relayer).deposit(tokenAddr, USDC(100))).wait();
+    assert(
+        (await escrow.balanceOf(relayer.address, tokenAddr)) === USDC(100),
+        'fresh sender locks 100'
+    );
+
+    // Sender both requests a full withdrawal AND signs a voucher (the rug).
+    await (await escrow.connect(relayer).requestWithdrawal(tokenAddr, USDC(100))).wait();
+    await assertReverts(
+        () => escrow.connect(relayer).executeWithdrawal(tokenAddr),
+        'WithdrawalNotReady'
+    );
+
+    const rugNonce = ethers.hexlify(ethers.randomBytes(32));
+    const rugDeadline = BigInt(await blockTime()) + BigInt(ONE_DAY);
+    const rugVoucher = {
+        from: relayer.address, to: deployer.address, token: tokenAddr,
+        amount: USDC(100), nonce: rugNonce, deadline: rugDeadline,
+    };
+    const rugSig = await signVoucher(escrow, relayer, rugVoucher);
+
+    // Receiver claims before the timelock elapses — collateral is still there.
+    const depBefore = await token.balanceOf(deployer.address);
+    await (await escrow.claim(
+        rugVoucher.from, rugVoucher.to, rugVoucher.token,
+        rugVoucher.amount, rugVoucher.nonce, rugVoucher.deadline, rugSig
+    )).wait();
+    assert(
+        (await token.balanceOf(deployer.address)) === depBefore + USDC(100),
+        'receiver is paid in full before sender can withdraw'
+    );
+    assert(
+        (await escrow.balanceOf(relayer.address, tokenAddr)) === 0n,
+        'sender budget drained by the claim'
+    );
+
+    // Timelock elapses; the rug fails — nothing left to withdraw.
+    await increaseTime(Number(WITHDRAW_DELAY) + 1);
+    await assertReverts(
+        () => escrow.connect(relayer).executeWithdrawal(tokenAddr),
+        'InsufficientBalance'
+    );
+
+    // ===== honest delayed withdrawal succeeds =====
+    console.log('\n--- delayed withdrawal (happy path) ---');
+    await token.mint(eve.address, USDC(30));
+    await token.connect(eve).approve(escrowAddr, USDC(30));
+    await (await escrow.connect(eve).deposit(tokenAddr, USDC(30))).wait();
+    await (await escrow.connect(eve).requestWithdrawal(tokenAddr, USDC(30))).wait();
+    await assertReverts(
+        () => escrow.connect(eve).executeWithdrawal(tokenAddr),
+        'WithdrawalNotReady'
+    );
+    const eveBefore = await token.balanceOf(eve.address);
+    await increaseTime(Number(WITHDRAW_DELAY) + 1);
+    await (await escrow.connect(eve).executeWithdrawal(tokenAddr)).wait();
+    assert(
+        (await token.balanceOf(eve.address)) === eveBefore + USDC(30),
+        'sender gets funds back after the delay'
+    );
+    assert(
+        (await escrow.balanceOf(eve.address, tokenAddr)) === 0n,
+        'escrow budget cleared after withdrawal'
+    );
 
     console.log('\n✅ All checks passed.\n');
 }

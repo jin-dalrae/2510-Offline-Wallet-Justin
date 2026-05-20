@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { storage } from '../lib/storage';
 import { blockchain } from '../lib/blockchain';
 import { WalletManager } from '../lib/wallet';
+import { getSessionSecret } from '../lib/secureSession';
 import toast from 'react-hot-toast';
 
 interface Wallet {
@@ -24,6 +25,9 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
     const [addMethod, setAddMethod] = useState<'create' | 'import'>('create');
     const [walletName, setWalletName] = useState('');
     const [importKey, setImportKey] = useState('');
+    // Set after creating a new wallet so we can show the user their recovery
+    // phrase ONCE, in the UI. Never logged, never persisted anywhere else.
+    const [newMnemonic, setNewMnemonic] = useState<string | null>(null);
 
     const loadWallets = async () => {
         setLoading(true);
@@ -65,23 +69,23 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
         try {
             // Reuse the current session password so the new wallet uses the same
             // unlock secret as the active wallet on this device.
-            const sessionPassword = sessionStorage.getItem('wallet_session_password');
+            const sessionPassword = await getSessionSecret();
             if (!sessionPassword) {
                 toast.error('Please sign in again to add a wallet');
                 return;
             }
             let wallet;
             let privateKey;
+            let createdMnemonic: string | null = null;
 
             if (addMethod === 'create') {
-                // Create new wallet
+                // Create new wallet. Capture the recovery phrase so we can
+                // surface it to the user in the UI below — it is NEVER logged
+                // (a console.log here would leak the seed to device logs).
                 const { wallet: newWallet, mnemonic } = WalletManager.createWallet();
                 wallet = newWallet;
                 privateKey = newWallet.privateKey;
-
-                // Show mnemonic to user
-                toast.success('Wallet created! Save your recovery phrase securely.');
-                console.log('Recovery phrase:', mnemonic);
+                createdMnemonic = mnemonic;
             } else {
                 // Import wallet
                 if (!importKey.trim()) {
@@ -109,6 +113,9 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
             setShowAddWallet(false);
             setWalletName('');
             setImportKey('');
+            // For a freshly created wallet, the seed phrase exists only here.
+            // Force the user to see and save it before continuing.
+            if (createdMnemonic) setNewMnemonic(createdMnemonic);
             await loadWallets();
         } catch (error) {
             console.error('Error adding wallet:', error);
@@ -294,6 +301,50 @@ export function WalletList({ activeWalletId, onWalletChange, onClose }: WalletLi
                     </>
                 )}
             </div>
+
+            {newMnemonic && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+                        <h3 className="font-bold text-xl text-[#1e3a5f]">Save your recovery phrase</h3>
+                        <p className="text-sm text-slate-600">
+                            These 12 words are the <strong>only</strong> way to restore
+                            this wallet. Write them down and keep them offline. Anyone
+                            with these words can take the funds. Justin never stores or
+                            shows them again.
+                        </p>
+
+                        <div className="grid grid-cols-3 gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                            {newMnemonic.split(' ').map((word, i) => (
+                                <div key={i} className="text-sm font-mono text-slate-800">
+                                    <span className="text-slate-400 mr-1 select-none">{i + 1}.</span>
+                                    {word}
+                                </div>
+                            ))}
+                        </div>
+
+                        <button
+                            onClick={async () => {
+                                try {
+                                    await navigator.clipboard.writeText(newMnemonic);
+                                    toast.success('Copied — now store it somewhere safe');
+                                } catch {
+                                    toast.error('Copy failed — write the words down manually');
+                                }
+                            }}
+                            className="w-full py-2 bg-white border border-slate-300 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition"
+                        >
+                            Copy to clipboard
+                        </button>
+
+                        <button
+                            onClick={() => setNewMnemonic(null)}
+                            className="w-full py-3 bg-[#1e3a5f] text-white rounded-xl font-bold hover:bg-[#2d4a6f] transition"
+                        >
+                            I&apos;ve written it down
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

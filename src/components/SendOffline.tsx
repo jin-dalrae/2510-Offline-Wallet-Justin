@@ -9,26 +9,24 @@ import { ethers } from 'ethers';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 
-import {
-    blockchain,
-    USDC_CONTRACT_ADDRESS,
-    CBBTC_CONTRACT_ADDRESS,
-    EURC_CONTRACT_ADDRESS,
-} from '../lib/blockchain';
+import { blockchain } from '../lib/blockchain';
+import { getTokenBySymbol, TokenSymbol } from '../lib/tokens';
 import { firebase } from '../lib/firebase';
 import { BalanceState } from '../hooks/useBalance';
 
-const TOKEN_ADDRESS: Record<'USDC' | 'EURC' | 'cbBTC', string> = {
-    USDC: USDC_CONTRACT_ADDRESS,
-    EURC: EURC_CONTRACT_ADDRESS,
-    cbBTC: CBBTC_CONTRACT_ADDRESS,
+// Single source of truth: the allowlist registry. Keeping these derived from
+// tokens.ts guarantees a voucher SendOffline signs is one ReceiveOffline /
+// escrow.verifyVoucher will accept (same address + decimals).
+const TOKEN_ADDRESS: Record<TokenSymbol, string> = {
+    USDC: getTokenBySymbol('USDC').address,
+    EURC: getTokenBySymbol('EURC').address,
+    cbBTC: getTokenBySymbol('cbBTC').address,
 };
 
-// USDC and EURC use 6 decimals; cbBTC uses 8.
-const TOKEN_DECIMALS: Record<'USDC' | 'EURC' | 'cbBTC', number> = {
-    USDC: 6,
-    EURC: 6,
-    cbBTC: 8,
+const TOKEN_DECIMALS: Record<TokenSymbol, number> = {
+    USDC: getTokenBySymbol('USDC').decimals,
+    EURC: getTokenBySymbol('EURC').decimals,
+    cbBTC: getTokenBySymbol('cbBTC').decimals,
 };
 
 interface SendOfflineProps {

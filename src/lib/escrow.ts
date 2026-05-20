@@ -17,22 +17,38 @@
 import { ethers } from 'ethers';
 import { JustinSigner, ensureSignerHasProvider } from './signer';
 import { blockchain, BASE_SEPOLIA_CONFIG } from './blockchain';
+import { isAllowlistedToken } from './tokens';
 
 const ESCROW_ABI = [
     'function balanceOf(address sender, address token) view returns (uint256)',
     'function usedNonce(address sender, bytes32 nonce) view returns (bool)',
+    'function pendingWithdrawal(address sender, address token) view returns (uint256)',
+    'function withdrawableAt(address sender, address token) view returns (uint256)',
+    'function MAX_VOUCHER_TTL() view returns (uint256)',
+    'function WITHDRAW_DELAY() view returns (uint256)',
     'function deposit(address token, uint256 amount)',
-    'function withdraw(address token, uint256 amount)',
+    'function requestWithdrawal(address token, uint256 amount)',
+    'function cancelWithdrawal(address token)',
+    'function executeWithdrawal(address token)',
     'function claim(address from, address to, address token, uint256 amount, bytes32 nonce, uint256 deadline, bytes signature)',
     'function quoteClaim(address from, address to, address token, uint256 amount, bytes32 nonce, uint256 deadline, bytes signature) view returns (bool claimable, string reason)',
     'function domainSeparator() view returns (bytes32)',
     'event Deposited(address indexed sender, address indexed token, uint256 amount, uint256 newBalance)',
+    'event WithdrawalRequested(address indexed sender, address indexed token, uint256 amount, uint256 executableAt)',
+    'event WithdrawalCancelled(address indexed sender, address indexed token)',
     'event Withdrawn(address indexed sender, address indexed token, uint256 amount, uint256 newBalance)',
     'event Claimed(address indexed from, address indexed to, address indexed token, uint256 amount, bytes32 nonce)',
 ];
 
 const EIP712_DOMAIN_NAME = 'JustinOfflineEscrow';
 const EIP712_DOMAIN_VERSION = '1';
+
+/**
+ * Must stay <= the contract's MAX_VOUCHER_TTL (48h). The client never signs a
+ * voucher whose deadline exceeds this, so the withdrawal-timelock guarantee
+ * (WITHDRAW_DELAY >= MAX_VOUCHER_TTL) always holds.
+ */
+const MAX_VOUCHER_TTL_SECONDS = 48 * 60 * 60;
 
 const VOUCHER_TYPES = {
     Voucher: [
@@ -168,14 +184,63 @@ export class EscrowService {
         return await c.deposit(token, amount);
     }
 
-    /** Pull funds back out of the escrow to the user's wallet. */
-    async withdraw(
+    /**
+     * Step 1 of 2: request to pull funds back out. Funds stay claimable by
+     * outstanding vouchers during the contract's WITHDRAW_DELAY window — this
+     * is what prevents a sender rugging a receiver who holds a valid voucher.
+     */
+    async requestWithdrawal(
         wallet: JustinSigner,
         token: string,
         amount: bigint
     ): Promise<ethers.TransactionResponse> {
         const c = this.getWriteContract(wallet);
-        return await c.withdraw(token, amount);
+        return await c.requestWithdrawal(token, amount);
+    }
+
+    /** Cancel a pending withdrawal request before it executes. */
+    async cancelWithdrawal(
+        wallet: JustinSigner,
+        token: string
+    ): Promise<ethers.TransactionResponse> {
+        const c = this.getWriteContract(wallet);
+        return await c.cancelWithdrawal(token);
+    }
+
+    /**
+     * Step 2 of 2: after the delay has elapsed, pull the funds out. The
+     * contract pays min(requested, currentBalance) so claims that landed
+     * during the window always take precedence.
+     */
+    async executeWithdrawal(
+        wallet: JustinSigner,
+        token: string
+    ): Promise<ethers.TransactionResponse> {
+        const c = this.getWriteContract(wallet);
+        return await c.executeWithdrawal(token);
+    }
+
+    /**
+     * Inspect a pending withdrawal. `executableAt` is unix seconds (0 = no
+     * pending request); `executable` is whether the delay has elapsed.
+     */
+    async getWithdrawalStatus(
+        sender: string,
+        token: string
+    ): Promise<{ amount: bigint; executableAt: number; executable: boolean }> {
+        const c = this.getReadContract();
+        const [amount, at] = await Promise.all([
+            c.pendingWithdrawal(sender, token),
+            c.withdrawableAt(sender, token),
+        ]);
+        const executableAt = Number(at);
+        return {
+            amount,
+            executableAt,
+            executable:
+                amount > 0n && executableAt > 0 &&
+                Math.floor(Date.now() / 1000) >= executableAt,
+        };
     }
 
     /**
@@ -196,7 +261,14 @@ export class EscrowService {
         const { wallet, to, token, amount, tokenSymbol, humanAmount, ttlSeconds = 24 * 60 * 60 } = params;
 
         if (!ethers.isAddress(to)) throw new Error('Invalid recipient address');
+        if (!ethers.isAddress(token)) throw new Error('Invalid token address');
+        if (!isAllowlistedToken(token)) throw new Error('Refusing to sign a voucher for an unrecognized token');
         if (amount <= 0n) throw new Error('Amount must be positive');
+        // Never sign past the contract's MAX_VOUCHER_TTL — otherwise the
+        // claim would revert DeadlineTooFar and the timelock guarantee breaks.
+        if (ttlSeconds <= 0 || ttlSeconds > MAX_VOUCHER_TTL_SECONDS) {
+            throw new Error(`ttlSeconds must be between 1 and ${MAX_VOUCHER_TTL_SECONDS}`);
+        }
 
         const nonce = ethers.hexlify(ethers.randomBytes(32));
         const deadline = Math.floor(Date.now() / 1000) + ttlSeconds;
@@ -250,8 +322,18 @@ export class EscrowService {
             if (voucher.chainId !== this.chainId) {
                 return { isValid: false, error: 'Voucher is for a different chain' };
             }
-            if (voucher.deadline < Math.floor(Date.now() / 1000)) {
+            // The token is part of the SIGNED message; its symbol/decimals are
+            // not. Reject anything outside the allowlist so a spoofed token
+            // address can never be displayed as USDC etc.
+            if (!isAllowlistedToken(voucher.token)) {
+                return { isValid: false, error: 'Voucher references an unrecognized token' };
+            }
+            const nowSec = Math.floor(Date.now() / 1000);
+            if (voucher.deadline < nowSec) {
                 return { isValid: false, error: 'Voucher has expired' };
+            }
+            if (voucher.deadline > nowSec + MAX_VOUCHER_TTL_SECONDS) {
+                return { isValid: false, error: 'Voucher deadline is implausibly far in the future' };
             }
 
             const domain = this.getDomain();
@@ -322,6 +404,12 @@ export class EscrowService {
         return JSON.stringify(voucher);
     }
 
+    /**
+     * Parse and STRICTLY validate an incoming voucher. A QR can carry
+     * arbitrary attacker-controlled bytes, so every field is type- and
+     * format-checked before any of it is used for crypto or display. Anything
+     * malformed throws rather than being silently coerced.
+     */
     decodeVoucher(payload: string): VoucherV3 {
         let parsed: any;
         try {
@@ -329,16 +417,58 @@ export class EscrowService {
         } catch {
             throw new Error('Voucher payload is not valid JSON');
         }
-        const required = ['version', 'from', 'to', 'token', 'amount', 'nonce', 'deadline', 'signature', 'chainId', 'escrowAddress'];
-        for (const k of required) {
-            if (parsed[k] === undefined || parsed[k] === null) {
-                throw new Error(`Voucher missing field: ${k}`);
-            }
+        if (typeof parsed !== 'object' || parsed === null) {
+            throw new Error('Voucher payload is not an object');
         }
         if (parsed.version !== 3) {
             throw new Error(`Unsupported voucher version: ${parsed.version}`);
         }
-        return parsed as VoucherV3;
+
+        for (const k of ['from', 'to', 'token', 'escrowAddress'] as const) {
+            if (typeof parsed[k] !== 'string' || !ethers.isAddress(parsed[k])) {
+                throw new Error(`Voucher field "${k}" is not a valid address`);
+            }
+        }
+
+        if (typeof parsed.amount !== 'string' || !/^[0-9]+$/.test(parsed.amount)) {
+            throw new Error('Voucher amount must be a base-unit integer string');
+        }
+        if (BigInt(parsed.amount) <= 0n) {
+            throw new Error('Voucher amount must be positive');
+        }
+
+        if (typeof parsed.nonce !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(parsed.nonce)) {
+            throw new Error('Voucher nonce must be a 32-byte hex string');
+        }
+        if (typeof parsed.signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(parsed.signature)) {
+            throw new Error('Voucher signature is malformed');
+        }
+        if (
+            typeof parsed.deadline !== 'number' ||
+            !Number.isInteger(parsed.deadline) ||
+            parsed.deadline <= 0
+        ) {
+            throw new Error('Voucher deadline must be a positive integer');
+        }
+        if (typeof parsed.chainId !== 'number' || !Number.isInteger(parsed.chainId)) {
+            throw new Error('Voucher chainId must be an integer');
+        }
+
+        return {
+            version: 3,
+            from: parsed.from,
+            to: parsed.to,
+            token: parsed.token,
+            amount: parsed.amount,
+            nonce: parsed.nonce,
+            deadline: parsed.deadline,
+            signature: parsed.signature,
+            // Untrusted display hints — explicitly NOT used for accounting.
+            tokenSymbol: typeof parsed.tokenSymbol === 'string' ? parsed.tokenSymbol : undefined,
+            humanAmount: typeof parsed.humanAmount === 'string' ? parsed.humanAmount : undefined,
+            chainId: parsed.chainId,
+            escrowAddress: parsed.escrowAddress,
+        };
     }
 }
 

@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { QRScanner } from './QRScanner';
 import { VoucherService } from '../lib/voucher';
 import { escrow } from '../lib/escrow';
+import { formatSignedAmount } from '../lib/tokens';
 import { storage } from '../lib/storage';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
@@ -49,9 +50,14 @@ export function ReceiveOffline({
                 return;
             }
 
-            // Convert base-units (string) into a human display amount using the
-            // sender-declared decimals (humanAmount), with a fallback for USDC.
-            const humanAmount = voucher.humanAmount ?? voucher.amount;
+            // SECURITY: derive the displayed amount and symbol ONLY from the
+            // signed token address + signed base-unit amount, via the token
+            // allowlist. The sender-supplied humanAmount/tokenSymbol fields are
+            // not part of the signed message and are never trusted here.
+            const { amount: humanAmount, symbol: tokenSym } = formatSignedAmount(
+                voucher.token,
+                voucher.amount
+            );
 
             const txId = uuidv4();
             const deviceId = storage.getDeviceId();
@@ -63,7 +69,7 @@ export function ReceiveOffline({
                 to: voucher.to,
                 amount: humanAmount,
                 voucher,
-                tokenSymbol: voucher.tokenSymbol,
+                tokenSymbol: tokenSym,
                 timestamp: Date.now(),
                 status: 'pending',
                 deviceId,
@@ -78,10 +84,10 @@ export function ReceiveOffline({
             );
 
             setVoucherAmount(humanAmount);
-            setVoucherToken(voucher.tokenSymbol || 'USDC');
+            setVoucherToken(tokenSym);
             setSenderAddress(voucher.from);
             setStep('complete');
-            toast.success('Voucher received!');
+            toast.success('Voucher accepted — settle online to finalize');
         } catch (err) {
             // Only show toast if it's a new error or sufficient time passed?
             // For now, just show it. The dedupe above handles rapid fire of SAME code.
@@ -170,9 +176,9 @@ export function ReceiveOffline({
                 {step === 'complete' && (
                     <div className="space-y-6">
                         <div className="text-center">
-                            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-small">
+                            <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
                                 <svg
-                                    className="w-10 h-10 text-green-600"
+                                    className="w-10 h-10 text-amber-600"
                                     fill="none"
                                     stroke="currentColor"
                                     viewBox="0 0 24 24"
@@ -180,19 +186,22 @@ export function ReceiveOffline({
                                     <path
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
-                                        strokeWidth={3}
-                                        d="M5 13l4 4L19 7"
+                                        strokeWidth={2}
+                                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                                     />
                                 </svg>
                             </div>
 
-                            <h4 className="text-2xl font-bold text-slate-900 mb-2">
-                                Voucher Received!
+                            <h4 className="text-2xl font-bold text-slate-900 mb-1">
+                                Voucher accepted
                             </h4>
+                            <p className="text-sm text-slate-500 mb-2">
+                                Pending — not final until you settle online
+                            </p>
 
                             <div className="my-6">
                                 <p className="text-4xl font-bold font-mono text-slate-900">
-                                    +{voucherAmount} <span className="text-2xl text-slate-500">{voucherToken}</span>
+                                    {voucherAmount} <span className="text-2xl text-slate-500">{voucherToken}</span>
                                 </p>
                             </div>
 
@@ -204,9 +213,16 @@ export function ReceiveOffline({
                             </div>
                         </div>
 
-                        <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-700 text-sm font-medium flex gap-3">
-                            <span className="text-xl">⏳</span>
-                            Funds will be settled on-chain when you go online
+                        <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-amber-800 text-sm space-y-2">
+                            <p className="font-bold flex gap-2"><span>⏳</span> This is not money in hand yet.</p>
+                            <p>
+                                The sender's collateral is locked and they cannot pull it
+                                back out from under this voucher before it expires. But a
+                                sender <em>can</em> issue more vouchers than they have
+                                locked — so settle this <strong>as soon as you're
+                                online</strong>. It only becomes final and irreversible
+                                once it's claimed on-chain.
+                            </p>
                         </div>
 
                         <button

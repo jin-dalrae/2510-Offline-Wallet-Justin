@@ -59,21 +59,49 @@ describe('OfflineEscrow', () => {
         return signer.signTypedData(domain, types, params);
     }
 
-    describe('deposit / withdraw', () => {
-        it('locks tokens into the sender bucket and lets them withdraw', async () => {
+    async function increaseTime(seconds: number): Promise<void> {
+        await ethers.provider.send('evm_increaseTime', [seconds]);
+        await ethers.provider.send('evm_mine', []);
+    }
+
+    describe('deposit / delayed withdrawal', () => {
+        it('locks tokens, then releases them only after WITHDRAW_DELAY', async () => {
             const { alice, token, escrow } = await deploy();
+            const tokenAddr = await token.getAddress();
 
-            await expect(escrow.connect(alice).deposit(await token.getAddress(), USDC_AMOUNT(100)))
+            await expect(escrow.connect(alice).deposit(tokenAddr, USDC_AMOUNT(100)))
                 .to.emit(escrow, 'Deposited')
-                .withArgs(alice.address, await token.getAddress(), USDC_AMOUNT(100), USDC_AMOUNT(100));
+                .withArgs(alice.address, tokenAddr, USDC_AMOUNT(100), USDC_AMOUNT(100));
 
-            expect(await escrow.balanceOf(alice.address, await token.getAddress())).to.equal(USDC_AMOUNT(100));
+            await expect(escrow.connect(alice).requestWithdrawal(tokenAddr, USDC_AMOUNT(40)))
+                .to.emit(escrow, 'WithdrawalRequested');
 
-            await expect(escrow.connect(alice).withdraw(await token.getAddress(), USDC_AMOUNT(40)))
+            // Too early.
+            await expect(
+                escrow.connect(alice).executeWithdrawal(tokenAddr)
+            ).to.be.revertedWithCustomError(escrow, 'WithdrawalNotReady');
+
+            const delay: bigint = await escrow.WITHDRAW_DELAY();
+            await increaseTime(Number(delay) + 1);
+
+            await expect(escrow.connect(alice).executeWithdrawal(tokenAddr))
                 .to.emit(escrow, 'Withdrawn')
-                .withArgs(alice.address, await token.getAddress(), USDC_AMOUNT(40), USDC_AMOUNT(60));
+                .withArgs(alice.address, tokenAddr, USDC_AMOUNT(40), USDC_AMOUNT(60));
 
-            expect(await escrow.balanceOf(alice.address, await token.getAddress())).to.equal(USDC_AMOUNT(60));
+            expect(await escrow.balanceOf(alice.address, tokenAddr)).to.equal(USDC_AMOUNT(60));
+        });
+
+        it('lets a pending withdrawal be cancelled', async () => {
+            const { alice, token, escrow } = await deploy();
+            const tokenAddr = await token.getAddress();
+            await escrow.connect(alice).deposit(tokenAddr, USDC_AMOUNT(100));
+            await escrow.connect(alice).requestWithdrawal(tokenAddr, USDC_AMOUNT(40));
+
+            await expect(escrow.connect(alice).cancelWithdrawal(tokenAddr))
+                .to.emit(escrow, 'WithdrawalCancelled');
+            await expect(
+                escrow.connect(alice).executeWithdrawal(tokenAddr)
+            ).to.be.revertedWithCustomError(escrow, 'NoPendingWithdrawal');
         });
 
         it('rejects zero-amount deposit', async () => {
@@ -83,11 +111,11 @@ describe('OfflineEscrow', () => {
             ).to.be.revertedWithCustomError(escrow, 'InvalidVoucher');
         });
 
-        it('rejects withdraw exceeding balance', async () => {
+        it('rejects withdrawal request exceeding balance', async () => {
             const { alice, token, escrow } = await deploy();
             await escrow.connect(alice).deposit(await token.getAddress(), USDC_AMOUNT(10));
             await expect(
-                escrow.connect(alice).withdraw(await token.getAddress(), USDC_AMOUNT(11))
+                escrow.connect(alice).requestWithdrawal(await token.getAddress(), USDC_AMOUNT(11))
             ).to.be.revertedWithCustomError(escrow, 'InsufficientBalance');
         });
 
@@ -95,7 +123,40 @@ describe('OfflineEscrow', () => {
             const { alice, bob, token, escrow } = await deploy();
             await escrow.connect(alice).deposit(await token.getAddress(), USDC_AMOUNT(100));
             await expect(
-                escrow.connect(bob).withdraw(await token.getAddress(), USDC_AMOUNT(50))
+                escrow.connect(bob).requestWithdrawal(await token.getAddress(), USDC_AMOUNT(50))
+            ).to.be.revertedWithCustomError(escrow, 'InsufficientBalance');
+        });
+
+        it('a withdrawal cannot rug a receiver holding a still-valid voucher', async () => {
+            const { alice, bob, token, escrow } = await deploy();
+            const tokenAddr = await token.getAddress();
+            await escrow.connect(alice).deposit(tokenAddr, USDC_AMOUNT(100));
+
+            // Alice requests a full withdrawal AND signs a voucher (the rug).
+            await escrow.connect(alice).requestWithdrawal(tokenAddr, USDC_AMOUNT(100));
+            const blk = await ethers.provider.getBlock('latest');
+            const params = {
+                from: alice.address,
+                to: bob.address,
+                token: tokenAddr,
+                amount: USDC_AMOUNT(100),
+                nonce: ethers.hexlify(ethers.randomBytes(32)),
+                deadline: BigInt(blk!.timestamp) + BigInt(ONE_DAY),
+            };
+            const sig = await signVoucher(escrow, alice, params);
+
+            // Bob claims before the timelock elapses — funds are still there.
+            await escrow.claim(
+                params.from, params.to, params.token,
+                params.amount, params.nonce, params.deadline, sig
+            );
+            expect(await token.balanceOf(bob.address)).to.equal(USDC_AMOUNT(100));
+
+            // Timelock elapses; the rug fails — nothing left.
+            const delay: bigint = await escrow.WITHDRAW_DELAY();
+            await increaseTime(Number(delay) + 1);
+            await expect(
+                escrow.connect(alice).executeWithdrawal(tokenAddr)
             ).to.be.revertedWithCustomError(escrow, 'InsufficientBalance');
         });
     });
@@ -238,6 +299,27 @@ describe('OfflineEscrow', () => {
             await expect(
                 escrow.claim(params.from, params.to, params.token, params.amount, params.nonce, params.deadline, sig)
             ).to.be.revertedWithCustomError(escrow, 'InsufficientBalance');
+        });
+
+        it('rejects a voucher whose deadline is implausibly far out', async () => {
+            const { alice, bob, token, escrow } = await deploy();
+            await escrow.connect(alice).deposit(await token.getAddress(), USDC_AMOUNT(100));
+
+            const blk = await ethers.provider.getBlock('latest');
+            const maxTtl: bigint = await escrow.MAX_VOUCHER_TTL();
+            const params = {
+                from: alice.address,
+                to: bob.address,
+                token: await token.getAddress(),
+                amount: USDC_AMOUNT(30),
+                nonce: ethers.hexlify(ethers.randomBytes(32)),
+                deadline: BigInt(blk!.timestamp) + maxTtl + BigInt(ONE_DAY),
+            };
+            const sig = await signVoucher(escrow, alice, params);
+
+            await expect(
+                escrow.claim(params.from, params.to, params.token, params.amount, params.nonce, params.deadline, sig)
+            ).to.be.revertedWithCustomError(escrow, 'DeadlineTooFar');
         });
 
         it('quoteClaim returns reasons for each failure mode', async () => {

@@ -20,13 +20,24 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *        from escrow to receiver
  *
  * Trust properties:
- *  - Sender cannot rug: locked funds are in the contract, not their wallet.
- *  - Sender cannot double-spend: each voucher has a unique nonce; reused
- *    nonces revert.
+ *  - Sender cannot rug a still-valid voucher: withdrawals are delayed by
+ *    WITHDRAW_DELAY (>= MAX_VOUCHER_TTL), and a voucher's deadline is capped
+ *    at MAX_VOUCHER_TTL. So any voucher a receiver holds that has not yet
+ *    expired is still backed by collateral the sender physically cannot
+ *    remove before that voucher's own deadline.
+ *  - Sender cannot replay: each voucher has a unique nonce; reused nonces
+ *    revert.
  *  - Receiver cannot forge: signature is verified against sender's address.
  *  - Cross-contract / cross-chain replay impossible: EIP-712 domain separator
  *    binds the signature to (name, version, chainId, this contract).
  *  - Expired vouchers can't be claimed: deadline check.
+ *
+ * Residual risk (NOT eliminated by this contract — disclosed honestly):
+ *  - Over-issuance / multi-spend. A sender can sign more vouchers than their
+ *    locked balance. Each is individually valid; on settlement only those that
+ *    fit the remaining balance succeed, the rest revert (InsufficientBalance).
+ *    Fully preventing this offline requires trusted hardware; the client must
+ *    surface this to receivers rather than imply a voucher is final.
  *
  * Wallet compatibility:
  *  Uses OpenZeppelin's SignatureChecker, which transparently supports both
@@ -41,6 +52,15 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
     string private constant SIGNING_DOMAIN = "JustinOfflineEscrow";
     string private constant SIGNATURE_VERSION = "1";
 
+    /// Longest a voucher's deadline may be in the future, measured at claim
+    /// time. Bounds how long collateral must stay put for any one voucher.
+    uint256 public constant MAX_VOUCHER_TTL = 48 hours;
+
+    /// Delay between requesting a withdrawal and being able to execute it.
+    /// MUST be >= MAX_VOUCHER_TTL so a sender cannot pull collateral out from
+    /// under a voucher that was signed (in good faith) before the request.
+    uint256 public constant WITHDRAW_DELAY = 48 hours;
+
     /// keccak256("Voucher(address from,address to,address token,uint256 amount,bytes32 nonce,uint256 deadline)")
     bytes32 public constant VOUCHER_TYPEHASH =
         keccak256(
@@ -54,7 +74,15 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
     /// senders can independently pick the same nonce without conflict.
     mapping(address => mapping(bytes32 => bool)) public usedNonce;
 
+    /// (sender, token) -> amount currently requested for delayed withdrawal.
+    mapping(address => mapping(address => uint256)) public pendingWithdrawal;
+
+    /// (sender, token) -> unix time at/after which executeWithdrawal is allowed.
+    mapping(address => mapping(address => uint256)) public withdrawableAt;
+
     event Deposited(address indexed sender, address indexed token, uint256 amount, uint256 newBalance);
+    event WithdrawalRequested(address indexed sender, address indexed token, uint256 amount, uint256 executableAt);
+    event WithdrawalCancelled(address indexed sender, address indexed token);
     event Withdrawn(address indexed sender, address indexed token, uint256 amount, uint256 newBalance);
     event Claimed(
         address indexed from,
@@ -69,6 +97,9 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
     error VoucherExpired();
     error InsufficientBalance();
     error InvalidVoucher();
+    error DeadlineTooFar();
+    error NoPendingWithdrawal();
+    error WithdrawalNotReady();
 
     constructor() EIP712(SIGNING_DOMAIN, SIGNATURE_VERSION) {}
 
@@ -85,12 +116,49 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
     }
 
     /**
-     * @notice Pull `amount` of `token` back from caller's escrow budget into
-     *         their wallet. Only the depositor can withdraw their own funds.
+     * @notice Step 1 of 2: request to pull `amount` of `token` back out.
+     *         The funds remain claimable by outstanding vouchers during the
+     *         WITHDRAW_DELAY window — this is deliberate, so a sender cannot
+     *         strand a receiver who holds a still-valid voucher. Re-calling
+     *         overwrites any prior request and restarts the timer.
      */
-    function withdraw(IERC20 token, uint256 amount) external nonReentrant {
+    function requestWithdrawal(IERC20 token, uint256 amount) external {
         uint256 current = balanceOf[msg.sender][address(token)];
         if (amount == 0 || amount > current) revert InsufficientBalance();
+        uint256 executableAt = block.timestamp + WITHDRAW_DELAY;
+        pendingWithdrawal[msg.sender][address(token)] = amount;
+        withdrawableAt[msg.sender][address(token)] = executableAt;
+        emit WithdrawalRequested(msg.sender, address(token), amount, executableAt);
+    }
+
+    /// @notice Cancel a pending withdrawal request before it executes.
+    function cancelWithdrawal(IERC20 token) external {
+        if (pendingWithdrawal[msg.sender][address(token)] == 0) revert NoPendingWithdrawal();
+        delete pendingWithdrawal[msg.sender][address(token)];
+        delete withdrawableAt[msg.sender][address(token)];
+        emit WithdrawalCancelled(msg.sender, address(token));
+    }
+
+    /**
+     * @notice Step 2 of 2: after WITHDRAW_DELAY has elapsed, pull the funds
+     *         out. Pays out min(requested, currentBalance): any claims that
+     *         landed during the delay window take precedence (receiver-first),
+     *         so the sender can never withdraw collateral a valid voucher
+     *         already consumed.
+     */
+    function executeWithdrawal(IERC20 token) external nonReentrant {
+        uint256 requested = pendingWithdrawal[msg.sender][address(token)];
+        if (requested == 0) revert NoPendingWithdrawal();
+        if (block.timestamp < withdrawableAt[msg.sender][address(token)]) {
+            revert WithdrawalNotReady();
+        }
+
+        uint256 current = balanceOf[msg.sender][address(token)];
+        uint256 amount = requested < current ? requested : current;
+        if (amount == 0) revert InsufficientBalance();
+
+        delete pendingWithdrawal[msg.sender][address(token)];
+        delete withdrawableAt[msg.sender][address(token)];
         unchecked {
             balanceOf[msg.sender][address(token)] = current - amount;
         }
@@ -116,6 +184,7 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
         bytes calldata signature
     ) external nonReentrant {
         if (block.timestamp > deadline) revert VoucherExpired();
+        if (deadline > block.timestamp + MAX_VOUCHER_TTL) revert DeadlineTooFar();
         if (amount == 0) revert InvalidVoucher();
         if (usedNonce[from][nonce]) revert NonceAlreadyUsed();
 
@@ -152,6 +221,7 @@ contract OfflineEscrow is EIP712, ReentrancyGuard {
         bytes calldata signature
     ) external view returns (bool claimable, string memory reason) {
         if (block.timestamp > deadline) return (false, "expired");
+        if (deadline > block.timestamp + MAX_VOUCHER_TTL) return (false, "deadline_too_far");
         if (usedNonce[from][nonce]) return (false, "nonce_used");
         if (balanceOf[from][address(token)] < amount) return (false, "insufficient_balance");
 

@@ -7,10 +7,16 @@ import {
     restoreSmartWalletSession,
     disconnectSmartWallet,
 } from '../lib/smartWallet';
+import {
+    getSessionSecret,
+    setSessionSecret,
+    clearSessionSecret,
+} from '../lib/secureSession';
 
 // Session-only cache: lets us re-unlock an EOA wallet on tab reload without
-// re-prompting for the password. Cleared automatically when the tab closes.
-const SESSION_PASSWORD_KEY = 'wallet_session_password';
+// re-prompting for the password. The password is encrypted under a
+// non-extractable key (see secureSession.ts) — never stored in plaintext —
+// and is gone when the webview/tab is torn down.
 // Cross-tab login/logout signal (no credentials in this one).
 const SESSION_FLAG_KEY = 'wallet_session_active';
 // Sticky flag for which wallet kind to prefer on next restore.
@@ -109,7 +115,7 @@ export function useWallet() {
                     return;
                 }
 
-                const sessionPassword = sessionStorage.getItem(SESSION_PASSWORD_KEY);
+                const sessionPassword = await getSessionSecret();
                 if (sessionPassword && !hasAutoUnlocked.current) {
                     hasAutoUnlocked.current = true;
                     try {
@@ -119,7 +125,7 @@ export function useWallet() {
                         return;
                     } catch (err) {
                         console.warn('EOA auto-unlock failed, clearing session', err);
-                        sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+                        clearSessionSecret();
                         localStorage.removeItem(SESSION_FLAG_KEY);
                     }
                 }
@@ -152,7 +158,7 @@ export function useWallet() {
             if (event.key === SESSION_FLAG_KEY && event.newValue === null) {
                 eoaManagerRef.current?.lock();
                 signerRef.current = null;
-                sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+                clearSessionSecret();
                 setState((prev) => ({ ...prev, isUnlocked: false, kind: null }));
             }
         };
@@ -178,7 +184,7 @@ export function useWallet() {
             const wm = new WalletManager();
             await wm.unlock(encryptedPrivateKey, password);
 
-            sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+            await setSessionSecret(password);
             localStorage.setItem(SESSION_FLAG_KEY, 'true');
 
             applyEoa({ address: wallet.address, accountName, profilePicture: undefined }, wm);
@@ -196,7 +202,7 @@ export function useWallet() {
             const wm = new WalletManager();
             await wm.unlock(walletData.encryptedPrivateKey, password);
 
-            sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+            await setSessionSecret(password);
             localStorage.setItem(SESSION_FLAG_KEY, 'true');
 
             applyEoa(walletData, wm);
@@ -233,7 +239,7 @@ export function useWallet() {
         }
         signerRef.current = null;
         eoaManagerRef.current = null;
-        sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+        clearSessionSecret();
         localStorage.removeItem(SESSION_FLAG_KEY);
         localStorage.removeItem(KIND_FLAG_KEY);
         setState((prev) => ({ ...prev, isUnlocked: false, kind: null }));

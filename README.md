@@ -94,8 +94,10 @@ Justin works the same way, in three moves:
 1. **Load the card (online, once).** While you have internet, you move some USDC
    into a special program on the blockchain called the **escrow contract**.
    Think of this like loading money onto a gift card. That money is now locked.
-   *You* can pull it back any time, but nobody can spend it except through a
-   voucher *you personally sign*.
+   You *can* pull it back — but not instantly: a withdrawal takes effect only
+   after a fixed delay (48h), and that delay is longer than any voucher can
+   live. So once you hand someone a voucher, you cannot yank the money out from
+   under it before their voucher would expire.
 
 2. **Write a signed note (offline).** With no internet, your phone creates a
    **voucher**: a little digital note that says *"Pay 5 USDC to this exact
@@ -159,7 +161,8 @@ This is the part that makes Justin different from a "queued IOU" app.
 |------|----------------------|
 | "Does the sender even have the money?" | The money was **locked in the escrow contract before the voucher was signed**. It's not in the sender's pocket anymore — it's already set aside. |
 | "Will the sender bother to settle?" | The sender doesn't *need* to do anything later. **The receiver** redeems the voucher themselves. |
-| "Can the sender spend the same money twice?" | Every voucher has a unique **nonce**. The contract marks each nonce used. A second voucher with the same nonce is rejected. Two different vouchers that together exceed the locked budget — only the ones that fit get paid; the rest revert. |
+| "Can the sender pull the money back after signing my voucher?" | Withdrawals are **delayed by 48h** (`requestWithdrawal` → wait → `executeWithdrawal`), and a voucher's deadline is capped at 48h. So any voucher you hold that hasn't expired is still backed — the sender physically cannot remove the collateral faster than your voucher's own deadline. Claims always take precedence over a pending withdrawal. |
+| "Can the sender replay or forge?" | Every voucher has a unique **nonce**; the contract marks each used and rejects reuse. The signature is verified against the sender's address. |
 | "Can someone forge a voucher?" | The voucher is signed with the sender's private key. The contract verifies the signature cryptographically. No signature, no money. |
 | "Can an old voucher be replayed forever?" | Every voucher has a **deadline** (24 hours by default). After that the contract refuses it. |
 | "Can a voucher made for one app/chain be reused on another?" | The signature is bound, via **EIP-712**, to this exact contract address and this exact blockchain. It is meaningless anywhere else. |
@@ -168,6 +171,16 @@ The honest caveat: the receiver is trusting **the escrow smart contract**, not
 the sender. That contract is small, open-source, has no admin backdoor, and
 cannot be upgraded or paused by anyone (including us). But "trust the contract"
 is still a real assumption — see [Security model](#security-model--honest-limitations).
+
+**The one risk that is *not* eliminated — over-issuance.** A dishonest sender
+can sign *more vouchers than their locked balance*. Each one is individually
+valid; the contract just can't pay them all. Whoever settles first wins; later
+claims revert. The contract can't prevent this offline (truly solving offline
+double-spend needs trusted hardware), so Justin does the honest thing instead:
+the receiver screen explicitly says a voucher is **pending, not money in hand**,
+and tells you to settle on-chain as soon as you're online. Treat a fresh voucher
+like an uncashed check from someone you don't fully know — good, but settle it
+promptly.
 
 ---
 
@@ -222,7 +235,9 @@ It is intentionally tiny. Four functions you'll use:
 | Function | Who calls it | What it does |
 |----------|--------------|--------------|
 | `deposit(token, amount)` | Sender, online | Pulls `amount` of an ERC-20 from your wallet into your locked budget. (You `approve()` the token first.) |
-| `withdraw(token, amount)` | Sender, online | Pulls unspent budget back to your wallet. Only you can withdraw your own funds. |
+| `requestWithdrawal(token, amount)` | Sender, online | Starts a withdrawal. Funds stay claimable during the delay window. |
+| `executeWithdrawal(token)` | Sender, online | After `WITHDRAW_DELAY` (48h), pays out `min(requested, currentBalance)` — claims that landed meanwhile take precedence. |
+| `cancelWithdrawal(token)` | Sender, online | Aborts a pending withdrawal. |
 | `claim(from, to, token, amount, nonce, deadline, signature)` | Receiver (or anyone), online | Verifies the voucher and moves `amount` from `from`'s locked budget to `to`. |
 | `quoteClaim(...)` | Anyone, read-only | Dry-run of `claim` — returns `(claimable, reason)` so a receiver can check a voucher *before* spending gas. |
 
@@ -231,12 +246,20 @@ Key state:
 - `balanceOf[sender][token]` — each sender's locked budget, per token.
 - `usedNonce[sender][nonce]` — replay protection, scoped per sender (two
   different people can independently pick the same random nonce; no conflict).
+- `pendingWithdrawal[sender][token]` / `withdrawableAt[sender][token]` — the
+  two-phase withdrawal request and the earliest time it can execute.
 
 Security properties baked in:
 
 - **No admin.** There is no owner, no upgrade key, no pause switch. The only
-  ways funds leave are *your* `withdraw` or a valid `claim` of a voucher *you*
-  signed. We (the developers) cannot move your money.
+  ways funds leave are *your* delayed withdrawal or a valid `claim` of a
+  voucher *you* signed. We (the developers) cannot move your money.
+- **Withdrawal timelock.** `WITHDRAW_DELAY (48h) >= MAX_VOUCHER_TTL (48h)`, and
+  `claim` rejects any voucher whose `deadline` is more than `MAX_VOUCHER_TTL`
+  in the future (`DeadlineTooFar`). Together these guarantee a sender cannot
+  pull collateral out from under a voucher that was signed in good faith before
+  the withdrawal was requested. This is the property that makes the
+  gift-card analogy actually true on-chain (it was *not* before).
 - **Reentrancy-guarded.** Uses OpenZeppelin `ReentrancyGuard` + `SafeERC20`.
 - **EIP-712 domain binding.** Signatures are tied to `(name, version, chainId,
   contract address)`. A voucher cannot be replayed on another deployment or
@@ -244,11 +267,16 @@ Security properties baked in:
 - **Wallet-agnostic verification.** Uses OpenZeppelin `SignatureChecker`, so it
   accepts both ordinary wallet signatures (ECDSA) **and** smart-contract wallet
   signatures (ERC-1271, e.g. Coinbase Smart Wallet / Safe) with no code change.
+  (Caveat: a *counterfactual* smart wallet — one that has never been deployed
+  on-chain — cannot yet be verified; ERC-6492 is not implemented. See
+  [Security model](#security-model--honest-limitations).)
 
 The contract is exercised by an end-to-end smoke test
 ([`scripts/verify-contract.ts`](scripts/verify-contract.ts)) covering the happy
 path, replay, expiry, forged signatures, balance underflow, relayer submission,
-and the ERC-1271 smart-wallet path — 16 assertions, all green.
+the ERC-1271 smart-wallet path, the deadline cap, and an explicit anti-rug
+scenario (sender requests a full withdrawal *and* signs a voucher; the receiver
+is paid and the rug reverts) — 27 assertions, all green.
 
 ---
 
@@ -463,10 +491,35 @@ What is actually guaranteed:
   Developers cannot touch your funds.
 - Vouchers are unforgeable, single-use, time-boxed, and bound to this exact
   deployment and chain.
+- A sender **cannot rug a still-valid voucher**: withdrawals are time-locked
+  for 48h and voucher deadlines are capped at 48h on-chain.
+- The receiver app derives the displayed amount and token **only from the
+  signed fields**, against a fixed token allowlist — a sender cannot spoof a
+  worthless token as USDC or inflate the shown amount.
 - Private keys for EOA wallets never leave the device and are never sent to a
   server.
 
 What you are still trusting / what is **not** done yet:
+
+- **Over-issuance (multi-spend) is bounded, not eliminated.** A sender can sign
+  more vouchers than their locked balance; only those that fit settle. The app
+  now discloses this honestly (vouchers show as *pending, not final*) instead
+  of implying certainty, but a receiver who stays offline a long time still
+  carries this risk. A full fix needs trusted hardware or receiver-verifiable
+  budget attestations.
+- **EOA key storage is software-only.** The key is password-encrypted in
+  on-device IndexedDB. The session password is no longer stored in plaintext —
+  it is AES-GCM encrypted under a **non-extractable** WebCrypto key and is
+  session-scoped (gone when the webview is torn down) — but this is
+  defense-in-depth, not a hardware boundary: code execution inside the page
+  could still abuse the key. Moving the secret into the Secure Enclave /
+  Keychain behind biometrics on iOS remains the **top open security item**
+  (the seam for it is `secureSession.isHardwareBacked()`).
+- **Coinbase Smart Wallet offline path is unverified.** Passkey signing may
+  require a network round-trip to Coinbase, and a counterfactual (never-deployed)
+  smart wallet's vouchers cannot be claimed until its first on-chain
+  transaction (no ERC-6492). The "recommended" label is provisional until this
+  is verified on a physical device.
 
 - **Smart-contract risk.** The contract is small and tested but unaudited. A
   bug could lose funds locked in it. Don't lock more than you'd risk.
@@ -496,7 +549,9 @@ money-transmitter rules depending on jurisdiction).
 **Built and in the codebase**
 
 - ✅ Trustless offline payments via on-chain escrow + EIP-712 vouchers (v3)
-- ✅ `OfflineEscrow` contract + 16-assertion smoke test
+- ✅ `OfflineEscrow` contract + 27-assertion smoke test
+- ✅ Withdrawal timelock + deadline cap (sender cannot rug a valid voucher)
+- ✅ Voucher display hardening (signed-field-only amount/token, allowlist)
 - ✅ ERC-1271 support (smart-contract wallets work)
 - ✅ Coinbase Smart Wallet (Face ID) sign-up
 - ✅ Email/password, Google, and recovery-phrase import flows
@@ -507,10 +562,14 @@ money-transmitter rules depending on jurisdiction).
 
 **Planned / in progress**
 
-- ⏳ Dashboard "offline budget" deposit/withdraw UI
-- ⏳ Paymaster gas sponsorship (gas-free transactions)
+- ⏳ Hardware-backed (Secure Enclave / biometric) EOA key storage — top priority
+- ⏳ Verify Coinbase Smart Wallet offline signing on-device; ERC-6492 for
+  counterfactual smart wallets
+- ⏳ Dashboard "offline budget" deposit / two-phase-withdraw UI
+- ⏳ Stronger over-issuance mitigation (receiver-verifiable budget attestations
+  / spend caps)
+- ⏳ Paymaster gas sponsorship (gas-free claim for receivers)
 - ⏳ Bluetooth LE transport (no camera needed)
-- ⏳ Receiver-side spending caps + sender liveness proofs
 - ⏳ Live WalletConnect for external wallets
 - ⏳ Contract audit + mainnet hardening
 
